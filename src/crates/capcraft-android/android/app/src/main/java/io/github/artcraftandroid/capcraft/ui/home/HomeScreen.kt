@@ -226,6 +226,7 @@ fun HomeScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var licences by remember { mutableStateOf(false) }
     var about by remember { mutableStateOf(false) }
+    var automation by remember { mutableStateOf(false) }
     /** 0 Edit, 1 Projects, 2 Me. */
     var tab by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(false) }
@@ -396,7 +397,12 @@ fun HomeScreen(
                         onShowTrash = { showingTrash = it; managing = null },
                         onTrashMenu = { trashMenu = it },
                     )
-                    else -> MeTab(onLicences = { licences = true }, onAbout = { about = true }, onCleared = { message = it })
+                    else -> MeTab(
+                    onLicences = { licences = true },
+                    onAbout = { about = true },
+                    onAutomation = { automation = true },
+                    onCleared = { message = it },
+                )
                 }
             }
             val picked = managing
@@ -524,6 +530,7 @@ fun HomeScreen(
         }
         if (about) AboutScreen(onBack = { about = false })
         if (licences) LicencesScreen(onBack = { licences = false })
+        if (automation) io.github.artcraftandroid.capcraft.ui.home.AutomationScreen(onBack = { automation = false })
         Toast(message) { message = null }
     }
 }
@@ -1028,7 +1035,7 @@ private fun BottomBar(tab: Int, latest: ProjectSummary?, onTab: (Int) -> Unit) {
 
 /** The app's settings: one tall row a setting, its value or a chevron at the right. */
 @Composable
-private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onCleared: (String) -> Unit) {
+private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onAutomation: () -> Unit, onCleared: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val version = remember { appVersion(context) }
@@ -1041,6 +1048,7 @@ private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onCleared: (Strin
         }
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             SettingRow("Clear cache", cache?.let(::size) ?: "") { clearing = true }
+            SettingRow("Automation (AI agents)", null, onAutomation)
             SettingRow("Licences", null, onLicences)
             SettingRow("About CapCraft", null, onAbout)
             SettingRow("Version", version, null)

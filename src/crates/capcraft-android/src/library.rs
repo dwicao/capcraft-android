@@ -276,6 +276,82 @@ pub fn media_folder(path: String) -> Result<String, MobileError> {
     Ok(folder.to_string_lossy().into_owned())
 }
 
+/// What is inside a video, audio or image file: the streams an import would
+/// see. Changes no project; the agent's `media.probe`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ProbeView {
+    /// The file probed.
+    pub path: String,
+    /// Container duration in microseconds, 0 when unknown or a still.
+    pub duration_us: i64,
+    /// Picture width, 0 for sound.
+    pub width: u32,
+    /// Picture height, 0 for sound.
+    pub height: u32,
+    /// Frame rate numerator, 0 when unknown.
+    pub fps_num: i64,
+    /// Frame rate denominator, 1 when unknown.
+    pub fps_den: i64,
+    /// Whether the file carries sound.
+    pub has_audio: bool,
+    /// Audio streams in file order (titles, languages).
+    pub audio_streams: Vec<String>,
+    /// Video codec name, when probed (e.g. "h264").
+    pub video_codec: String,
+    /// Audio codec name, when probed.
+    pub audio_codec: String,
+}
+
+/// Probes the file at `path`, as [`media.probe`] would before importing it.
+#[uniffi::export]
+pub fn probe_media(path: String) -> Result<ProbeView, MobileError> {
+    let info = concat_host::media::probe(&path)?;
+    let duration_us = info.duration.map(crate::micros).unwrap_or(0).max(0);
+    let (width, height, fps_num, fps_den, video_codec) = info
+        .video
+        .as_ref()
+        .map(|video| {
+            let (num, den) = parse_fraction(&video.frame_rate_fraction);
+            (
+                video.width,
+                video.height,
+                num,
+                den.max(1),
+                video.codec.clone(),
+            )
+        })
+        .unwrap_or((0, 0, 0, 1, String::new()));
+    let audio = info.audio.as_ref();
+    Ok(ProbeView {
+        path,
+        duration_us,
+        width,
+        height,
+        fps_num,
+        fps_den,
+        has_audio: audio.is_some(),
+        audio_streams: info
+            .audio_streams
+            .iter()
+            .map(|stream| {
+                let title = stream.title.trim();
+                let language = stream.language.trim();
+                format!("{}{}", title, if language.is_empty() { String::new() } else { format!(" [{language}]") })
+            })
+            .collect(),
+        video_codec,
+        audio_codec: audio.map(|stream| stream.codec.clone()).unwrap_or_default(),
+    })
+}
+
+/// "30000/1001" into its numerator and denominator; (0, 1) when unparseable.
+fn parse_fraction(fraction: &str) -> (i64, i64) {
+    let mut parts = fraction.split('/');
+    let num = parts.next().and_then(|n| n.trim().parse().ok()).unwrap_or(0);
+    let den = parts.next().and_then(|n| n.trim().parse().ok()).unwrap_or(1);
+    (num, den.max(1))
+}
+
 /// The summary of the project in `folder`.
 pub(crate) fn summary(folder: &Path) -> Result<ProjectSummary, MobileError> {
     let path = folder.to_string_lossy().into_owned();

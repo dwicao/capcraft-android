@@ -1,0 +1,42 @@
+{
+  "name": "local-capcraft",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "description": "dsh-go plugin for CapCraft: status strip, composer capsules and a panel over the app's agent API (Settings > Automation).",
+  "author": "CapCraft contributors",
+  "license": "AGPL-3.0-or-later",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "dsh": ">=0.2.1-rc.2 <0.3.0-0"
+  },
+  "dshGo": {
+    "v": 1,
+    "title": { "zh": "CapCraft 剪辑", "en": "CapCraft edit" },
+    "icon": "video-file",
+    "wants": ["clipboard"],
+    "contributes": {
+      "composer.strip": [
+        { "id": "capcraft-status", "icon": "video-file", "panel": "capcraft" }
+      ],
+      "composer.actions": [
+        { "id": "capcraft-clip", "label": { "zh": "剪这段", "en": "Cut this" }, "icon": "video" },
+        { "id": "capcraft-prompt", "label": { "zh": "剪辑指令", "en": "Edit brief" }, "icon": "terminal" }
+      ],
+      "panels": [
+        {
+          "id": "capcraft",
+          "title": { "zh": "CapCraft", "en": "CapCraft" },
+          "icon": "video-file",
+          "placement": ["session.tab", "features"],
+          "presentation": "sheet"
+        }
+      ]
+    }
+  }
+}

@@ -27,6 +27,9 @@ class CapCraftApplication : Application() {
                 File(cacheDir, "exports").mkdirs()
                 init(filesDir.absolutePath, cacheDir.absolutePath)
                 NativeContext.start(this@CapCraftApplication)
+                // the agent API: a loopback-socket JSON-RPC server for AI agents
+                // (DSH-go, scripts) to drive projects without touching the UI.
+                runCatching { io.github.artcraftandroid.capcraft.engine.AgentServer.start(this@CapCraftApplication) }
                 engineLoaded = true
             }
         }
