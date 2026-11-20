@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -310,9 +311,9 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     val measurer = rememberTextMeasurer()
     val scope = rememberCoroutineScope()
     // DeX: the zoom sits on the view model, so Ctrl+=/−/0 reaches it; touch pinch writes back
-    var zoom by remember { mutableStateOf(vm.timelineZoom) }
-    if (vm.timelineZoom != zoom && !vm.timelineZoom.equals(zoom)) zoom = vm.timelineZoom
-    var vScroll by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+    var zoom by remember { mutableFloatStateOf(vm.timelineZoom) }
+    if (vm.timelineZoom != zoom) zoom = vm.timelineZoom
+    var vScroll by remember { mutableFloatStateOf(0f) }
     /** A trim being dragged: clip id, head or tail, the offset so far in µs. */
     var trim by remember { mutableStateOf<Triple<String, Boolean, Long>?>(null) }
     var fling by remember { mutableStateOf<Job?>(null) }
@@ -360,7 +361,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         fling?.cancel()
                         // DeX: the right mouse button selects the clip and opens its menu
-                        if (down.buttons.isSecondaryPressed) {
+                        if (currentEvent.buttons.isSecondaryPressed) {
                             val layout = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, Track.DP_PER_SECOND * dp * zoom / 1_000_000f, vScroll, currentRows.value, openKinds(vm))
                             val hit = layout.hit(down.position)
                             if (hit != null) {
