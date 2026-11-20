@@ -24,6 +24,21 @@ const STRIP_INTERVAL_MS = 20_000
 const PANEL_INTERVAL_MS = 10_000
 
 // --- where CapCraft writes its address -------------------------------------
+//
+// The app's automation.json lives in its private folder, which the engine
+// cannot read — and the app picks a random free port every launch. So the
+// user pastes the address + token once (Settings > Automation > Copy), and
+// the panel keeps them beside the auto-discovery below. Env vars and a
+// readable automation.json still win when they exist.
+
+let manual = { address: '', token: '' }
+
+function manualEndpoint() {
+  if (!manual.address) return null
+  const parsed = parseEndpoint(manual.address)
+  if (!parsed) return null
+  return { ...parsed, token: manual.token || '', source: 'manual' }
+}
 
 function listingPaths() {
   const home = process.env.DSH_HOME ? path.dirname(process.env.DSH_HOME) : os.homedir()
@@ -71,6 +86,8 @@ function resolve() {
     const parsed = parseEndpoint(text)
     if (parsed) return { ...parsed, token: process.env.CAPCRAFT_TOKEN || '', source: 'setting' }
   }
+  const fromPanel = manualEndpoint()
+  if (fromPanel) return fromPanel
   const listing = readListing()
   if (listing) {
     const parsed = parseEndpoint(listing.address)
@@ -301,8 +318,8 @@ export function apply(ctx) {
             {
               type: 'text',
               text: language
-                ? '改动都通过对话里的提示词完成：点「插入剪辑指令」，改两句，再发送。'
-                : 'Every change goes through the chat: tap "Edit brief", adjust it, then send.',
+                ? '连不上时：在 CapCraft 里打开 Settings > Automation，把地址和令牌告诉助手填进 CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN。改动都通过对话里的提示词完成：点「插入剪辑指令」，改两句，再发送。'
+                : 'If offline: open Settings > Automation in CapCraft and give the address and token to the assistant for CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN. Every change goes through the chat: tap "Edit brief", adjust it, then send.',
               tone: 'muted',
             },
           ],

@@ -89,7 +89,7 @@ object AgentServer {
     private var listingFile: java.io.File? = null
     private var threads = Executors.newCachedThreadPool()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val lane = Executors.newSingleThreadExecutor()
+    private val lane = Executors.newFixedThreadPool(4)
 
     /** Open editor sessions by project folder, shared with the UI's own view models. */
     private val sessions = ConcurrentHashMap<String, MobileSession>()
@@ -388,16 +388,21 @@ object AgentServer {
     }
 
     /**
-     * Engine work, one call at a time, on the server's own lane. The session
-     * locks internally, so this only serializes with itself — never with the
-     * UI's lane, and nesting is impossible (a single thread, called straight).
+     * Engine work on the server's own pool (4 threads). Sessions lock
+     * internally and the UI serializes on its own dispatcher, so concurrent
+     * agent calls are safe; the pool (not one lane) means a slow first open
+     * — the engine warms scrub copies — never wedges version/status behind
+     * it. Each call gives up after the socket timeout instead of hanging.
      */
     private fun <T> runCommands(block: () -> T): T {
         val future = lane.submit<T> { block() }
         return try {
-            future.get()
+            future.get(CALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         } catch (e: java.util.concurrent.ExecutionException) {
             throw e.cause ?: e
+        } catch (e: java.util.concurrent.TimeoutException) {
+            future.cancel(true)
+            throw IllegalStateException("CapCraft is still working on that; try again in a bit.")
         }
     }
 
