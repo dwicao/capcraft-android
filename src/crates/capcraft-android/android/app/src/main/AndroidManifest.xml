@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Samsung DeX: every density the desktop shows, with a mouse and a hardware keyboard. -->
+    <supports-screens
+        android:largeScreens="true"
+        android:xlargeScreens="true" />
+    <uses-feature android:name="android.hardware.type.pc" android:required="false" />
+
     <!-- downloading the speech and cutout models, only when the user asks for those features -->
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- voice-overs -->
@@ -28,12 +34,14 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.CapCraft">
 
+        <!-- Samsung DeX and large screens: a resizable window instead of a forced portrait phone. -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="false"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

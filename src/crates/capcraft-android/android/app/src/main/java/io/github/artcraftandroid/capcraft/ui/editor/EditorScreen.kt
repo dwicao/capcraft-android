@@ -152,7 +152,7 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
     // how far above the screen's foot the preview ends: a notice shows just above it, as the reference's do
     var belowPreview by remember { mutableStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
-    Box(Modifier.fillMaxSize().background(Palette.EditorTop)) {
+    Box(Modifier.fillMaxSize().background(Palette.EditorTop).dexShortcuts(vm)) {
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             TopBar(vm = vm, onClose = ::leave, onExport = ::export)
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -180,8 +180,10 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
             Box(Modifier.fillMaxWidth().background(Palette.Timeline).navigationBarsPadding()) { Dock(vm) }
         }
         PanelHost(vm)
+        PreviewClipMenu(vm)
         if (vm.recording && vm.prompter.isNotBlank()) Teleprompter(vm.prompter)
         if (vm.toolSearch) ToolSearch(vm) { vm.toolSearch = false }
+        if (vm.showShortcuts) ShortcutsSheet { vm.showShortcuts = false }
         if (vm.fullscreen) FullscreenPreview(vm)
         if (vm.exportSheet) ExportSheet(vm, onExport = ::export)
         if (vm.editingCover) CoverEditor(vm, onClose = { vm.editingCover = false })
@@ -213,6 +215,10 @@ private fun TopBar(vm: EditorViewModel, onClose: () -> Unit, onExport: () -> Uni
         // finding a tool by its name, beside the close button as the reference has it
         Box(Modifier.size(44.dp, 50.dp).clickable { vm.stop(); vm.toolSearch = true }, contentAlignment = Alignment.Center) {
             Glyph(LucideIcons.Search, Palette.DockText, size = 24.dp, description = "Find a tool")
+        }
+        // DeX: the keyboard shortcuts cheat sheet
+        Box(Modifier.size(44.dp, 50.dp).clickable { vm.showShortcuts = true }, contentAlignment = Alignment.Center) {
+            Glyph(LucideIcons.Keyboard, Palette.DockText, size = 24.dp, description = "Keyboard shortcuts")
         }
         Spacer(Modifier.weight(1f))
         val t = vm.timeline
