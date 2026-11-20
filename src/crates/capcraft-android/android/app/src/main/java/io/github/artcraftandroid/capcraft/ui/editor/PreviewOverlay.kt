@@ -81,6 +81,7 @@ fun PreviewOverlay(vm: EditorViewModel, modifier: Modifier) {
     /** The frame's middle lines the dragged picture is caught on, shown as guides: up and down, across. */
     var guides by remember { mutableStateOf(false to false) }
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val boxes by produceState(emptyList<ClipBox>(), session, revision, playhead, playing) {
         if (session == null || playing) {
             value = emptyList()

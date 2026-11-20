@@ -32,7 +32,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEvent
-import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -82,6 +81,11 @@ private val DEX_SHORTCUTS = listOf(
     DexShortcut("Right-click", "The clip's menu"),
 )
 
+/**
+ * DeX hardware-keyboard shortcuts for the editor. Must be applied from a @Composable (it focuses
+ * the root so keys reach the handler): `Box(Modifier.dexShortcuts(vm))`.
+ */
+@Composable
 fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
     val focus = remember { FocusRequester() }
     androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -91,8 +95,8 @@ fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
 }
 
 private fun handleDexKey(vm: EditorViewModel, e: KeyEvent): Boolean {
-    if (e.type != KeyEventType.KeyDown) return false
     val kev = e.nativeKeyEvent
+    if (kev.action != android.view.KeyEvent.ACTION_DOWN) return false
     val ctrl = kev.isCtrlPressed
     val shift = kev.isShiftPressed
     val alt = kev.isAltPressed
