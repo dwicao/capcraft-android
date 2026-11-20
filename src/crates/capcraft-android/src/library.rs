@@ -331,7 +331,7 @@ pub fn probe_media(path: String) -> Result<ProbeView, MobileError> {
         fps_den,
         has_audio: audio.is_some(),
         audio_streams: info
-            .audio_streams
+            .audio_tracks
             .iter()
             .map(|stream| {
                 let title = stream.title.trim();
