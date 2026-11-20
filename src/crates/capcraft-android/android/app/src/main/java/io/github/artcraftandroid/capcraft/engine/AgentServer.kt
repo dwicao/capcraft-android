@@ -252,8 +252,8 @@ object AgentServer {
                     request.optInt("fps", 30).toUInt(),
                 )
             })
-            "project.open" -> viewOf(openSession(request.getString("path")))
-            "project.get" -> viewOf(openSession(request.getString("path")))
+            "project.open" -> viewOf(runCommands { openSession(request.getString("path")).view() })
+            "project.get" -> viewOf(runCommands { openSession(request.getString("path")).view() })
             "project.document" -> JSONObject(openSession(request.getString("path")).document())
             "project.save" -> {
                 val s = openSession(request.getString("path"))
@@ -361,7 +361,9 @@ object AgentServer {
             "edit.undo" -> viewOf(runCommands { openSession(request.getString("path")).undo() })
             "edit.redo" -> viewOf(runCommands { openSession(request.getString("path")).redo() })
             "catalogue.list" -> JSONArray(runCommands {
-                packages(request.optString("kind").takeIf { it.isNotEmpty() } ?: "effect")
+                val list: List<io.github.artcraftandroid.capcraft.core.PackageInfo> =
+                    packages(request.optString("kind").takeIf { it.isNotEmpty() } ?: "effect")
+                list
                     .map { p ->
                         JSONObject()
                             .put("id", p.id).put("name", p.name).put("kind", p.kind)
@@ -370,7 +372,7 @@ object AgentServer {
                             .put("params", JSONArray(p.params.map { q ->
                                 JSONObject().put("key", q.key).put("label", q.label)
                                     .put("min", q.min).put("max", q.max)
-                                    .put("default", q.defaultValue).put("step", q.step).put("unit", q.unit)
+                                    .put("default", q.default).put("step", q.step).put("unit", q.unit)
                             }))
                     }
             })
@@ -528,7 +530,7 @@ object AgentServer {
             width to height
         } else {
             val scale = minOf(MAX_FRAME_PX.toDouble() / maxOf(view.width.toDouble(), 1.0), 1.0)
-            maxOf((view.width * scale).toInt(), 2) to maxOf((view.height * scale).toInt(), 2)
+            maxOf((view.width.toDouble() * scale).toInt(), 2) to maxOf((view.height.toDouble() * scale).toInt(), 2)
         }
         val picture = runCommands { session.frame(atUs, w.toUInt(), h.toUInt(), Motion.STILL) }
         val bitmap: Bitmap = picture.intoBitmap(null) ?: throw IllegalStateException("Could not render that frame.")
