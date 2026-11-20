@@ -1104,9 +1104,6 @@ private fun Page(title: String, onBack: () -> Unit, content: @Composable () -> U
 /** Where the app's source lives. */
 private const val SOURCE_URL = "https://github.com/artcraft-android/capcraft-android"
 
-/** Where the app's source lives. */
-private const val SOURCE_URL = "https://github.com/artcraft-android/capcraft-android"
-
 /**
  * Settings → Automation: the agent API for AI agents (DSH-go's agent,
  * scripts, editor plugins on the same machine).
