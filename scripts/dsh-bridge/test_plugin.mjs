@@ -6,6 +6,7 @@
 //   node test_plugin.mjs
 
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import { spawn } from 'node:child_process'
 import net from 'node:net'
 import path from 'node:path'
@@ -141,6 +142,10 @@ try {
 } finally {
   mock.child.kill()
 }
+
+// The passing run wrote a state file into the repo; remove it, the real
+// engine writes the real one.
+await fs.promises.unlink(path.resolve(HERE, '..', '..', 'plugins', 'dsh-go-local-capcraft', '.capcraft-endpoint.json')).catch(() => {})
 
 const failed = checks.filter((c) => !c.ok)
 for (const c of checks) console.log(`${c.ok ? 'ok  ' : 'FAIL'} ${c.label}${c.ok || !c.detail ? '' : ` — ${c.detail}`}`)

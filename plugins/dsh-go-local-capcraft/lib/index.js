@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const name = 'local-capcraft'
 
@@ -179,6 +180,33 @@ function call(method, params) {
 
 // --- what the strip and the panel show --------------------------------------
 
+// Where this plugin records the endpoint that last worked, so the
+// capcraft-agent skill (and scripts) can reach the app without asking:
+// <plugin-dir>/.capcraft-endpoint.json. Written on every successful
+// snapshot; the address rotates per app launch, the token does not.
+function stateFile() {
+  try {
+    const dir = path.dirname(fileURLToPath(import.meta.url))
+    return path.join(dir, '..', '.capcraft-endpoint.json')
+  } catch {
+    return null
+  }
+}
+
+function recordEndpoint(target) {
+  const file = stateFile()
+  if (!file) return
+  try {
+    fs.writeFileSync(file, JSON.stringify({
+      endpoint: `${target.host}:${target.port}`,
+      token: target.token || '',
+      at: new Date().toISOString(),
+    }) + '\n')
+  } catch {
+    // best effort: the panel still works without it.
+  }
+}
+
 // The strip has 24 characters; a long project name must not be cut mid-word.
 function short(text, max = 24) {
   const value = String(text || '')
@@ -202,6 +230,7 @@ async function snapshot() {
     } catch {
       // A project listing is a bonus; the version already proves the app answers.
     }
+    recordEndpoint(target)
     return {
       connected: true,
       address: `${target.host}:${target.port}`,
