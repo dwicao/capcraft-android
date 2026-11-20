@@ -81,13 +81,14 @@ function parseEndpoint(text) {
 }
 
 function resolve() {
+  // The panel's manual entry is the most deliberate, most recent choice.
+  const fromPanel = manualEndpoint()
+  if (fromPanel) return fromPanel
   for (const text of [process.env.CAPCRAFT_ENDPOINT]) {
     if (!text) continue
     const parsed = parseEndpoint(text)
     if (parsed) return { ...parsed, token: process.env.CAPCRAFT_TOKEN || '', source: 'setting' }
   }
-  const fromPanel = manualEndpoint()
-  if (fromPanel) return fromPanel
   const listing = readListing()
   if (listing) {
     const parsed = parseEndpoint(listing.address)
@@ -287,42 +288,58 @@ export function apply(ctx) {
       view: (scope, caps) => {
         const language = zh(caps && caps.locale)
         const connected = { $: 'data.connected' }
-        return {
-          type: 'stack',
-          title: 'CapCraft',
-          children: [
-            {
-              type: 'metric',
-              label: language ? '编辑器' : 'Editor',
-              value: { $: 'data.connectedText' },
-              tone: { $: 'data.tone' },
-              caption: { $: 'data.address' },
-            },
-            {
-              type: 'keyValue',
-              items: [
-                [language ? '版本' : 'Version', { $: 'data.version' }],
-                [language ? '项目' : 'Project', { $: 'data.project' }],
-                [language ? '地址来源' : 'Address from', { $: 'data.source' }],
-              ],
-            },
-            { type: 'callout', text: { $: 'data.note' }, tone: connected ? 'good' : 'warn' },
-            {
-              type: 'actions',
-              items: [
-                { label: language ? '刷新' : 'Refresh', action: 'refresh', icon: 'refresh' },
-                { label: language ? '插入剪辑指令' : 'Edit brief', action: 'prompt', icon: 'terminal', style: 'primary' },
-                { label: language ? '复制地址' : 'Copy address', action: 'copy', icon: 'copy' },
-              ],
-            },
-            {
+        const summary = [
+          {
+            type: 'metric',
+            label: language ? '编辑器' : 'Editor',
+            value: { $: 'data.connectedText' },
+            tone: { $: 'data.tone' },
+            caption: { $: 'data.address' },
+          },
+          {
+            type: 'keyValue',
+            items: [
+              [language ? '版本' : 'Version', { $: 'data.version' }],
+              [language ? '项目' : 'Project', { $: 'data.project' }],
+              [language ? '地址来源' : 'Address from', { $: 'data.source' }],
+            ],
+          },
+          { type: 'callout', text: { $: 'data.note' }, tone: connected ? 'good' : 'warn' },
+          {
+            type: 'actions',
+            items: [
+              { label: language ? '刷新' : 'Refresh', action: 'refresh', icon: 'refresh' },
+              { label: language ? '插入剪辑指令' : 'Edit brief', action: 'prompt', icon: 'terminal', style: 'primary' },
+              { label: language ? '复制地址' : 'Copy address', action: 'copy', icon: 'copy' },
+            ],
+          },
+          {
+            type: 'text',
+            text: language
+              ? '改动都通过对话里的提示词完成：点「插入剪辑指令」，改两句，再发送。'
+              : 'Every change goes through the chat: tap "Edit brief", adjust it, then send.',
+            tone: 'muted',
+          },
+        ]
+        if (!caps || !Array.isArray(caps.components) || !caps.components.includes('form')) {
+          return {
+            v: 1, type: 'stack', title: 'CapCraft', children: summary.concat([{
               type: 'text',
               text: language
-                ? '连不上时：在 CapCraft 里打开 Settings > Automation，把地址和令牌告诉助手填进 CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN。改动都通过对话里的提示词完成：点「插入剪辑指令」，改两句，再发送。'
-                : 'If offline: open Settings > Automation in CapCraft and give the address and token to the assistant for CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN. Every change goes through the chat: tap "Edit brief", adjust it, then send.',
+                ? '此 App 版本不支持手动填地址：把 CapCraft Automation 页的地址和令牌告诉助手，填进 CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN。'
+                : 'This app version has no manual address form: give the address and token from CapCraft Automation to the assistant for CAPCRAFT_ENDPOINT / CAPCRAFT_TOKEN.',
               tone: 'muted',
-            },
-          ],
+            }]),
+          }
+        }
+        return {
+          v: 2, type: 'stack', title: 'CapCraft', children: summary.concat([{
+            type: 'form', submit: 'saveEndpoint', submitLabel: language ? '连接' : 'Connect',
+            children: [
+              { type: 'textField', label: language ? '地址 (host:port)' : 'Address (host:port)', bind: 'data.form.address', placeholder: '127.0.0.1:41077', required: true, maxLength: 64 },
+              { type: 'textField', label: language ? '令牌' : 'Token', bind: 'data.form.token', placeholder: language ? '从 Automation 页复制' : 'Copy from the Automation page', required: true, maxLength: 256 },
+            ],
+          }]),
         }
       },
       data: (scope, emit, caps) => {
@@ -342,7 +359,11 @@ export function apply(ctx) {
             source: state.source,
             note: state.connected
               ? (language ? `连上了 ${state.address}` : `Reached ${state.address}`)
-              : (language ? `连不上 ${state.address}。在 CapCraft 里打开 Settings > Automation。` : `Cannot reach ${state.address}. Turn on Settings > Automation in CapCraft.`),
+              : (language ? `连不上 ${state.address}。在 CapCraft 里打开 Settings > Automation，把下面的地址和令牌填好点连接。` : `Cannot reach ${state.address}. Open Settings > Automation in CapCraft and fill in the address and token below.`),
+            form: {
+              address: manual.address || state.address,
+              token: manual.token || '',
+            },
           })
         }
         tick()
@@ -358,6 +379,20 @@ export function apply(ctx) {
         copy: async () => {
           const target = resolve()
           return { copy: `${target.host}:${target.port}`, toast: '地址已复制' }
+        },
+        saveEndpoint: (scope, event) => {
+          const language = zh(event && event.locale)
+          const values = (event && event.value && event.value.values) || {}
+          const address = String(values['data.form.address'] || '').trim()
+          const token = String(values['data.form.token'] || '').trim()
+          if (!parseEndpoint(address)) throw new Error(language ? '地址要是 host:port 的样子' : 'Address must look like host:port')
+          if (token.length < 8) throw new Error(language ? '令牌太短了' : 'That token is too short')
+          manual = { address, token }
+          return {
+            patch: { form: { address, token }, source: 'manual' },
+            refresh: true,
+            toast: language ? '已保存，正在连接…' : 'Saved, connecting…',
+          }
         },
       },
     })

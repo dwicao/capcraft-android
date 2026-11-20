@@ -123,6 +123,21 @@ try {
   const downStrip = await readStrip(handlers, 'en-US')
   check('strip says offline when the app is away',
     downStrip && downStrip.tone === 'warn' && /offline/.test(downStrip.text), JSON.stringify(downStrip))
+
+  // The manual endpoint form: validation, then save + refresh.
+  // A stale env override must not win over the panel's fresh choice.
+  process.env.CAPCRAFT_ENDPOINT = `127.0.0.1:${port}`
+  process.env.CAPCRAFT_TOKEN = 'stale'
+  const actions = handlers.panels.get('capcraft').actions
+  let threw = ''
+  try {
+    actions.saveEndpoint({}, { locale: 'zh-CN', value: { values: { 'data.form.address': 'nope', 'data.form.token': 'short' } } })
+  } catch (e) { threw = String((e && e.message) || e) }
+  check('bad address is refused in Chinese', /host:port/.test(threw), threw)
+  const saved = actions.saveEndpoint({}, { locale: 'en-US', value: { values: { 'data.form.address': mock.address, 'data.form.token': mock.token } } })
+  check('save returns a refresh', saved && saved.refresh === true, JSON.stringify(saved))
+  const manual = await readPanel(handlers, 'zh-CN')
+  check('manual endpoint connects', manual && manual.connected === true && manual.source === 'manual', JSON.stringify(manual))
 } finally {
   mock.child.kill()
 }
