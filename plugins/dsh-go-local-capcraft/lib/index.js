@@ -181,29 +181,35 @@ function call(method, params) {
 // --- what the strip and the panel show --------------------------------------
 
 // Where this plugin records the endpoint that last worked, so the
-// capcraft-agent skill (and scripts) can reach the app without asking:
-// <plugin-dir>/.capcraft-endpoint.json. Written on every successful
-// snapshot; the address rotates per app launch, the token does not.
-function stateFile() {
+// capcraft-agent skill (and scripts) can reach the app without asking.
+// Primary: $DSH_HOME/.capcraft-endpoint.json (the engine always defines
+// DSH_HOME; bash reads the same path). Fallback: beside this plugin.
+// Written on every successful snapshot; the address rotates per app
+// launch, the token does not.
+function stateFiles() {
+  const files = []
+  if (process.env.DSH_HOME) files.push(path.join(process.env.DSH_HOME, '.capcraft-endpoint.json'))
   try {
     const dir = path.dirname(fileURLToPath(import.meta.url))
-    return path.join(dir, '..', '.capcraft-endpoint.json')
+    files.push(path.join(dir, '..', '.capcraft-endpoint.json'))
   } catch {
-    return null
+    // bundled without a file URL: DSH_HOME above still covers it.
   }
+  return files
 }
 
 function recordEndpoint(target) {
-  const file = stateFile()
-  if (!file) return
-  try {
-    fs.writeFileSync(file, JSON.stringify({
-      endpoint: `${target.host}:${target.port}`,
-      token: target.token || '',
-      at: new Date().toISOString(),
-    }) + '\n')
-  } catch {
-    // best effort: the panel still works without it.
+  const payload = JSON.stringify({
+    endpoint: `${target.host}:${target.port}`,
+    token: target.token || '',
+    at: new Date().toISOString(),
+  }) + '\n'
+  for (const file of stateFiles()) {
+    try {
+      fs.writeFileSync(file, payload)
+    } catch {
+      // best effort per location; the panel still works without it.
+    }
   }
 }
 
