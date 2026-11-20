@@ -583,6 +583,178 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         viewModelScope.launch(Threads.commands) { runCatching { seek(playhead) } }
     }
 
+    /** The timeline's zoom level (DeX: Ctrl+=, Ctrl+−, Ctrl+0); watched by the timeline. */
+    var timelineZoom by mutableStateOf(1f)
+        private set
+
+    /** The right-click menu over a clip, or null; the menu that is open clears this on dismiss. */
+    var clipMenu by mutableStateOf<ClipMenu?>(null)
+
+    /** The keyboard shortcuts cheat sheet is open over the editor. */
+    var showShortcuts by mutableStateOf(false)
+
+    /** The copied clip (DeX: Ctrl+C / Ctrl+V), kept while the project is open. */
+    private var copiedJson: String? = null
+
+    /** Multiplies the timeline zoom by [k], from the DeX shortcuts. */
+    fun zoomTimeline(k: Float) {
+        timelineZoom = (timelineZoom * k).coerceIn(0.1f, 20f)
+    }
+
+    /** Back to the timeline zoom of 1, from the DeX shortcuts. */
+    fun resetZoom() {
+        timelineZoom = 1f
+    }
+
+    /** Moves the playhead by [deltaUs] (a jump: no scrubbing trail), stopping at the ends. */
+    fun jumpBy(deltaUs: Long) {
+        if (playing) stop()
+        val end = timeline?.durationUs ?: 0L
+        playhead = (playhead + deltaUs).coerceIn(0L, end.coerceAtLeast(0L))
+        scrubbedAt = android.os.SystemClock.uptimeMillis()
+        val at = playhead
+        viewModelScope.launch(Threads.commands) { runCatching { seek(at) } }
+    }
+
+    /** Moves the playhead to [at] (a jump), stopping at the ends. */
+    fun jumpTo(at: Long) = jumpBy(at - playhead)
+
+    /** One frame at 30fps, in microseconds. */
+    fun frameUs(): Long {
+        val num = timeline?.fpsNum ?: 30L
+        val den = timeline?.fpsDen ?: 1L
+        return if (num > 0) 1_000_000L * den / num else 33_333L
+    }
+
+    /** The previous ([direction] < 0) or next ([direction] > 0) cut at the playhead. */
+    fun gotoCut(direction: Int) {
+        val cuts = timeline?.rows?.flatMap { r ->
+            r.clips.flatMap { listOf(it.startUs, it.startUs + it.durationUs) }
+        }.orEmpty().distinct().sorted()
+        if (cuts.isEmpty()) return
+        val next = if (direction < 0) cuts.lastOrNull { it < playhead - 1_000L } else cuts.firstOrNull { it > playhead + 1_000L }
+        (next ?: if (direction < 0) 0L else (timeline?.durationUs ?: 0L))?.let(::jumpTo)
+    }
+
+    /** Splits the selected clip (or the main clip) at the playhead. */
+    fun splitAtPlayhead() {
+        val clip = selected?.let(::clip) ?: mainClipAtPlayhead() ?: run {
+            message = "Add a clip first"
+            return
+        }
+        val inside = playhead > clip.startUs + 30_000 && playhead < clip.startUs + clip.durationUs - 30_000
+        if (inside) edit { split(listOf(clip.id), playhead) } else message = "Move the playhead inside the clip to split it"
+    }
+
+    /** Deletes the selected clip. */
+    fun deleteSelected() {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        edit { delete(listOf(id)) }
+        select(null)
+    }
+
+    /** Duplicates the selected clip. */
+    fun duplicateSelected() {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        edit(select = { it.createdId.ifEmpty { null } }) { duplicate(id) }
+    }
+
+    /** Copies the selected clip for pasting (the id resolves when [pasteCopied] runs). */
+    fun copySelected() {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        if (clip(id) == null) {
+            message = "That clip is gone"
+            return
+        }
+        copiedJson = id
+        message = "Copied"
+    }
+
+    /** Pastes the copied clip at the playhead (right after the original on the main track). */
+    fun pasteCopied() {
+        val id = copiedJson ?: run {
+            message = "Nothing to paste"
+            return
+        }
+        val s = session ?: return
+        val at = playhead
+        viewModelScope.launch {
+            val result = withContext(Threads.commands) {
+                runCatching {
+                    var v = s.duplicate(id)
+                    val pasted = v.createdId
+                    if (pasted.isNotEmpty()) {
+                        val now = v.rows.flatMap { it.clips }.firstOrNull { it.id == pasted }
+                        if (now != null) {
+                            val mainId = v.rows.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.trackId
+                            v = if (now.trackId == mainId) {
+                                // the main track stays in order: the copy goes where the playhead is
+                                val ordered = v.rows.first { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }.clips.sortedBy { it.startUs }
+                                val from = ordered.indexOfFirst { it.id == pasted }
+                                var target = ordered.count { it.startUs + it.durationUs / 2 < at }
+                                if (from >= 0 && target > from) target -= 1
+                                if (from >= 0 && target != from) s.reorderMain(pasted, target.toUInt()) else v
+                            } else {
+                                s.moveClip(pasted, "", at)
+                            }
+                        }
+                    }
+                    v
+                }
+            }
+            result.onSuccess { v ->
+                timeline = v
+                selected = v.createdId.ifEmpty { selected }
+                scheduleSave()
+                message = "Pasted"
+            }.onFailure {
+                copiedJson = null
+                fail(it)
+            }
+        }
+    }
+
+    /** Moves the selected clip along the timeline by [deltaUs], as one undo step. */
+    fun nudgeSelected(deltaUs: Long) {
+        val clip = selected?.let(::clip) ?: run {
+            message = "Select a clip first"
+            return
+        }
+        val main = rowOf(clip.id)?.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN
+        if (!main) {
+            edit(select = { clip.id }) { moveClip(clip.id, "", (clip.startUs + deltaUs).coerceAtLeast(0)) }
+            return
+        }
+        // the main track stays in order: a nudge swaps the clip with its neighbour
+        val ordered = timeline?.rows?.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.clips?.sortedBy { it.startUs }.orEmpty()
+        val from = ordered.indexOfFirst { it.id == clip.id }
+        val to = from + if (deltaUs > 0) 1 else -1
+        if (from < 0 || ordered.getOrNull(to) == null) {
+            message = "Nothing to move past"
+            return
+        }
+        edit(select = { clip.id }) { reorderMain(clip.id, to.toUInt()) }
+    }
+
+    /** Saves the project now, in the background. */
+    fun saveNowAsync() {
+        viewModelScope.launch {
+            busy = "Saving"
+            runCatching { saveNow() }
+            busy = null
+            message = "Saved"
+        }
+    }
+
     /** The export settings (the top bar's chip shows the resolution). */
     var exportResolution: Int? by mutableStateOf(null)
     var exportFps by mutableStateOf(30)

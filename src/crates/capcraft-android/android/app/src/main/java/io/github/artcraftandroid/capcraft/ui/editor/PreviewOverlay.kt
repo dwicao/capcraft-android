@@ -128,6 +128,23 @@ fun PreviewOverlay(vm: EditorViewModel, modifier: Modifier) {
             .pointerInput(session) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // DeX: the right mouse button selects the picture under it and opens its menu
+                    if (down.buttons.isSecondaryPressed) {
+                        val boxes = currentBoxes
+                        val w = size.width.toFloat()
+                        val h = size.height.toFloat()
+                        val hit = boxes.firstOrNull { inside(it, down.position, w, h) }
+                        if (hit == null) {
+                            vm.select(null)
+                        } else {
+                            if (vm.selected != hit.clipId) vm.select(hit.clipId)
+                            vm.clipMenu = with(androidx.compose.ui.unit.Density(this@pointerInput)) {
+                                ClipMenu(hit.clipId, down.position.x.toDp().value, down.position.y.toDp().value, fromPreview = true)
+                            }
+                        }
+                        down.consume()
+                        return@awaitEachGesture
+                    }
                     val boxes = currentBoxes
                     val selected = vm.selected
                     val w = size.width.toFloat()
