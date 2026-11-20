@@ -14,10 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.focusable
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
@@ -26,10 +28,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
@@ -79,7 +82,13 @@ private val DEX_SHORTCUTS = listOf(
     DexShortcut("Right-click", "The clip's menu"),
 )
 
-fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier = onKeyEvent { handleDexKey(vm, it) }
+fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
+    val focus = remember { FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        try { focus.requestFocus() } catch (_: Exception) { }
+    }
+    return this.focusRequester(focus).focusable().onKeyEvent { handleDexKey(vm, it) }
+}
 
 private fun handleDexKey(vm: EditorViewModel, e: KeyEvent): Boolean {
     if (e.type != KeyEventType.KeyDown) return false
@@ -299,7 +308,7 @@ fun ShortcutsSheet(onClose: () -> Unit) {
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Glyph(LucideIcons.Keyboard, Palette.DockText, size = 22.dp)
-                Spacer(Modifier.padding(start = 10.dp))
+                Spacer(Modifier.width(10.dp))
                 Text("Keyboard shortcuts", style = Type.Title)
                 Spacer(Modifier.weight(1f))
                 Text(

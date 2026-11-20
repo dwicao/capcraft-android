@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -366,9 +367,12 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                             val hit = layout.hit(down.position)
                             if (hit != null) {
                                 vm.select(hit.second.id)
-                                vm.clipMenu = with(androidx.compose.ui.unit.Density(dp)) {
-                                    ClipMenu(hit.second.id, down.position.x.toDp().value, down.position.y.toDp().value, fromPreview = false)
-                                }
+                                vm.clipMenu = ClipMenu(
+                                    hit.second.id,
+                                    down.position.x / dp,
+                                    down.position.y / dp,
+                                    fromPreview = false,
+                                )
                             } else {
                                 vm.select(null)
                                 vm.clipMenu = null

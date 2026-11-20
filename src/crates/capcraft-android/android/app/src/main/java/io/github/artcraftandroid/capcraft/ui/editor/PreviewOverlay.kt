@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.unit.dp
@@ -131,17 +132,20 @@ fun PreviewOverlay(vm: EditorViewModel, modifier: Modifier) {
                     // DeX: the right mouse button selects the picture under it and opens its menu
                     if (currentEvent.buttons.isSecondaryPressed) {
                         val boxes = currentBoxes
-                        val w = size.width.toFloat()
-                        val h = size.height.toFloat()
-                        val hit = boxes.firstOrNull { inside(it, down.position, w, h) }
+                        val pw = size.width.toFloat()
+                        val ph = size.height.toFloat()
+                        val hit = boxes.firstOrNull { inside(it, down.position, pw, ph) }
                         if (hit == null) {
                             vm.select(null)
                         } else {
                             if (vm.selected != hit.clipId) vm.select(hit.clipId)
-                            // the gesture scope is a Density, so px reads as dp
-                            vm.clipMenu = with(this@pointerInput) {
-                                ClipMenu(hit.clipId, down.position.x.toDp().value, down.position.y.toDp().value, fromPreview = true)
-                            }
+                            // the gesture scope is a Density, so px converts to dp
+                            vm.clipMenu = ClipMenu(
+                                hit.clipId,
+                                (down.position.x / density.density),
+                                (down.position.y / density.density),
+                                fromPreview = true,
+                            )
                         }
                         down.consume()
                         return@awaitEachGesture

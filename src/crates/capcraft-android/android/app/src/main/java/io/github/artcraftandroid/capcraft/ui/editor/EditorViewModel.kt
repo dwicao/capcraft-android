@@ -585,7 +585,6 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
 
     /** The timeline's zoom level (DeX: Ctrl+=, Ctrl+−, Ctrl+0); watched by the timeline. */
     var timelineZoom by mutableStateOf(1f)
-        private set
 
     /** The right-click menu over a clip, or null; the menu that is open clears this on dismiss. */
     var clipMenu by mutableStateOf<ClipMenu?>(null)
@@ -633,7 +632,7 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         }.orEmpty().distinct().sorted()
         if (cuts.isEmpty()) return
         val next = if (direction < 0) cuts.lastOrNull { it < playhead - 1_000L } else cuts.firstOrNull { it > playhead + 1_000L }
-        (next ?: if (direction < 0) 0L else (timeline?.durationUs ?: 0L))?.let(::jumpTo)
+        jumpTo(next ?: if (direction < 0) 0L else (timeline?.durationUs ?: 0L))
     }
 
     /** Splits the selected clip (or the main clip) at the playhead. */
