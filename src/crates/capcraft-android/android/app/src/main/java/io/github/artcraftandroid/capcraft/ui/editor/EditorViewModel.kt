@@ -170,6 +170,76 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
 
     private var saveJob: Job? = null
 
+    /** The document changed underneath the open editor (an AI agent saved it):
+     *  offer a reload, which drops unsaved UI edits in favour of the file. */
+    var externalChange by mutableStateOf(false)
+        private set
+
+    fun dismissExternalChange() {
+        externalChange = false
+    }
+
+    /** Re-reads the document from disk, replacing the open session. */
+    fun reloadFromDisk() {
+        val s = session ?: return
+        externalChange = false
+        viewModelScope.launch {
+            busy = "Reloading"
+            val result = withContext(Threads.commands) {
+                runCatching {
+                    s.save()
+                    s.destroy()
+                    MobileSession.open(path)
+                }
+            }
+            result.onSuccess { fresh ->
+                session = fresh
+                timeline = withContext(Threads.commands) { fresh.view() }
+                selected = null
+                chosen = null
+                panel = null
+                noteSaved()
+                message = "Reloaded"
+            }.onFailure { fail(it) }
+            busy = null
+        }
+    }
+
+    /** The document's mtime, for the external-change watcher. */
+    private fun documentMtime(): Long = try {
+        java.io.File(path, "concat.json").lastModified()
+    } catch (_: Exception) {
+        0L
+    }
+
+    /** Watches the document for saves from outside (the agent API) and raises
+     *  [externalChange]. Call once when the editor opens; stops itself when
+     *  the session is gone. Our own saves move the mtime too, so the watcher
+     *  re-arms after each save it sees. */
+    fun watchDocument() {
+        viewModelScope.launch {
+            var known = withContext(Threads.commands) { documentMtime() }
+            while (true) {
+                delay(2000)
+                if (session == null) return@launch
+                val now = withContext(Threads.commands) { documentMtime() }
+                if (now != known) {
+                    known = now
+                    // our own save just landed: re-arm, don't prompt
+                    val sinceSave = android.os.SystemClock.uptimeMillis() - lastSaveAt
+                    if (sinceSave > 3000) externalChange = true
+                }
+            }
+        }
+    }
+
+    /** When we last saved, so the watcher ignores our own writes. */
+    @Volatile private var lastSaveAt = 0L
+
+    private fun noteSaved() {
+        lastSaveAt = android.os.SystemClock.uptimeMillis()
+    }
+
     fun open(incoming: List<Uri>, then: String? = null) {
         if (session != null) return
         viewModelScope.launch {
@@ -178,6 +248,8 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
             val s = opened.getOrThrow()
             session = s
             timeline = withContext(Threads.commands) { s.view() }
+            noteSaved()
+            watchDocument()
             // a photo project opened again exports a picture, as it did when it was made
             if (java.io.File(path, PHOTO_MARK).exists()) {
                 photoTab = true
@@ -1132,6 +1204,7 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         saveJob = viewModelScope.launch {
             delay(800)
             withContext(Threads.commands) { runCatching { session?.save() } }
+            noteSaved()
         }
     }
 
@@ -1139,6 +1212,7 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
     suspend fun saveNow() {
         saveJob?.cancel()
         withContext(Threads.commands) { runCatching { session?.save() } }
+        noteSaved()
     }
 
     /** Saves now and lets the player go; a project left with nothing on it is deleted. */
