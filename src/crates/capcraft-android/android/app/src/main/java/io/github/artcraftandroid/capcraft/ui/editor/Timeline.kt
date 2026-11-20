@@ -1110,7 +1110,12 @@ private fun DrawScope.drawFrames(clip: ClipView, r: Rect, layout: Layout) {
     }
     val from = clip.sourceStartUs
     val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
-    val strip = Thumbs.strip(clip.path, from, to, count, (tile * 0.8f).roundToInt().coerceAtLeast(16)) ?: return
+    // While the strip renders (one job per clip after a big split), paint one
+    // frame across the body: a single decode, so bodies fill in seconds.
+    val strip = Thumbs.strip(clip.path, from, to, count, (tile * 0.8f).roundToInt().coerceAtLeast(16))
+        ?: return Thumbs.still(clip.path, from, (r.width.coerceAtLeast(tile) * 1.2f).roundToInt())?.let {
+            drawCropped(it, r)
+        } ?: Unit
     val frameW = strip.width.toFloat() / count
     val img = strip.asImageBitmap()
     for (i in 0 until needed) {
