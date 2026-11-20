@@ -170,86 +170,53 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
 
     private var saveJob: Job? = null
 
-    /** The document changed underneath the open editor (an AI agent saved it):
-     *  offer a reload, which drops unsaved UI edits in favour of the file. */
-    var externalChange by mutableStateOf(false)
-        private set
-
-    fun dismissExternalChange() {
-        externalChange = false
-    }
-
-    /** Re-reads the document from disk, replacing the open session. */
-    fun reloadFromDisk() {
-        val s = session ?: return
-        externalChange = false
-        viewModelScope.launch {
-            busy = "Reloading"
-            val result = withContext(Threads.commands) {
-                runCatching {
-                    s.save()
-                    s.destroy()
-                    MobileSession.open(path)
-                }
-            }
-            result.onSuccess { fresh ->
-                session = fresh
-                timeline = withContext(Threads.commands) { fresh.view() }
-                selected = null
-                chosen = null
-                panel = null
-                noteSaved()
-                message = "Reloaded"
-            }.onFailure { fail(it) }
-            busy = null
+    /** Applies a view the agent API published for this project: the same
+     *  session object the editor holds, so the edit is already in. */
+    private val agentView: (TimelineView) -> Unit = { v ->
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+            if (session == null) return@launch
+            val before = timeline
+            timeline = v
+            if (selected != null && clip(selected!!) == null) selected = null
+            message = describeAgentEdit(before, v)
         }
     }
 
-    /** The document's mtime, for the external-change watcher. */
-    private fun documentMtime(): Long = try {
-        java.io.File(path, "concat.json").lastModified()
-    } catch (_: Exception) {
-        0L
-    }
-
-    /** Watches the document for saves from outside (the agent API) and raises
-     *  [externalChange]. Call once when the editor opens; stops itself when
-     *  the session is gone. Our own saves move the mtime too, so the watcher
-     *  re-arms after each save it sees. */
-    fun watchDocument() {
-        viewModelScope.launch {
-            var known = withContext(Threads.commands) { documentMtime() }
-            while (true) {
-                delay(2000)
-                if (session == null) return@launch
-                val now = withContext(Threads.commands) { documentMtime() }
-                if (now != known) {
-                    known = now
-                    // our own save just landed: re-arm, don't prompt
-                    val sinceSave = android.os.SystemClock.uptimeMillis() - lastSaveAt
-                    if (sinceSave > 3000) externalChange = true
-                }
-            }
+    /** One line on what the agent did, from the clips that came, went or moved. */
+    private fun describeAgentEdit(before: TimelineView?, after: TimelineView): String {
+        val was = before?.rows?.flatMap { it.clips }.orEmpty().associateBy { it.id }
+        val now = after.rows.flatMap { it.clips }.associateBy { it.id }
+        val added = (now.keys - was.keys).size
+        val removed = (was.keys - now.keys).size
+        val moved = now.keys.intersect(was.keys).count { id ->
+            val a = was.getValue(id)
+            val b = now.getValue(id)
+            a.startUs != b.startUs || a.durationUs != b.durationUs
         }
-    }
-
-    /** When we last saved, so the watcher ignores our own writes. */
-    @Volatile private var lastSaveAt = 0L
-
-    private fun noteSaved() {
-        lastSaveAt = android.os.SystemClock.uptimeMillis()
+        return when {
+            added > 0 && removed == 0 && moved == 0 -> "Agent added ${if (added == 1) "a clip" else "$added clips"}"
+            removed > 0 && added == 0 && moved == 0 -> "Agent deleted ${if (removed == 1) "a clip" else "$removed clips"}"
+            moved > 0 && added == 0 && removed == 0 -> "Agent edited the timeline"
+            else -> "Agent updated the timeline"
+        }
     }
 
     fun open(incoming: List<Uri>, then: String? = null) {
         if (session != null) return
         viewModelScope.launch {
-            val opened = withContext(Threads.commands) { runCatching { MobileSession.open(path) } }
+            val opened = withContext(Threads.commands) {
+                runCatching {
+                    io.github.artcraftandroid.capcraft.engine.SessionHub.get(path)
+                        ?: io.github.artcraftandroid.capcraft.engine.SessionHub.publishNew(
+                            path, MobileSession.open(path),
+                        )
+                }
+            }
             opened.onFailure { fail(it); return@launch }
             val s = opened.getOrThrow()
             session = s
             timeline = withContext(Threads.commands) { s.view() }
-            noteSaved()
-            watchDocument()
+            io.github.artcraftandroid.capcraft.engine.SessionHub.subscribe(path, agentView)
             // a photo project opened again exports a picture, as it did when it was made
             if (java.io.File(path, PHOTO_MARK).exists()) {
                 photoTab = true
@@ -1204,7 +1171,6 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         saveJob = viewModelScope.launch {
             delay(800)
             withContext(Threads.commands) { runCatching { session?.save() } }
-            noteSaved()
         }
     }
 
@@ -1212,21 +1178,24 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
     suspend fun saveNow() {
         saveJob?.cancel()
         withContext(Threads.commands) { runCatching { session?.save() } }
-        noteSaved()
     }
 
     /** Saves now and lets the player go; a project left with nothing on it is deleted. */
     suspend fun close() {
         saveJob?.cancel()
         val empty = timeline?.rows?.all { it.clips.isEmpty() } ?: false
+        val s = session
+        session = null
+        if (s != null) io.github.artcraftandroid.capcraft.engine.SessionHub.unsubscribe(path, agentView)
         withContext(Threads.commands) {
             runCatching { pause() }
             runCatching { clearPlayback() }
             if (empty) {
                 runCatching { io.github.artcraftandroid.capcraft.core.deleteProject(path) }
             } else {
-                runCatching { session?.save() }
+                runCatching { s?.save() }
             }
+            if (s != null) io.github.artcraftandroid.capcraft.engine.SessionHub.release(path, s)
         }
     }
 
@@ -1234,7 +1203,13 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         super.onCleared()
         runCatching { session?.save() }
         runCatching { clearPlayback() }
-        session?.destroy()
+        val s = session
+        session = null
+        if (s != null) {
+            io.github.artcraftandroid.capcraft.engine.SessionHub.unsubscribe(path, agentView)
+            io.github.artcraftandroid.capcraft.engine.SessionHub.release(path, s)
+        }
+        s?.destroy()
     }
 
     class Factory(private val app: Application, private val path: String) : ViewModelProvider.Factory {

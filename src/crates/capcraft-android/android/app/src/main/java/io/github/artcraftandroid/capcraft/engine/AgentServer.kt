@@ -63,10 +63,11 @@ import java.io.ByteArrayOutputStream
  *
  * Times cross as whole microseconds; the API's edit commands are the same
  * op-tagged JSON the app itself sends (`{"op": "splitClips", …}`), so one
- * `edit.apply` is one undo step, exactly as in the UI. The server keeps the
- * app's own engine (UniFFI `MobileSession`) on `Threads.commands`, the same
- * single-lane dispatcher the editor uses; DSH-go's plugin and bridge are
- * thin clients over this socket.
+ * `edit.apply` is one undo step, exactly as in the UI. Sessions are shared
+ * with the editor through [SessionHub] — one object per project, so the
+ * agent's edits appear live in the open editor, and the editor is told each
+ * new view as it lands. Undo history is shared too: one timeline, one
+ * history, whoever edits it.
  *
  * Security: loopback only (127.0.0.1), token on the first line within
  * [AUTH_TIMEOUT_MS], wrong tokens throttled in [throttle]. A server started
@@ -91,11 +92,20 @@ object AgentServer {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val lane = Executors.newFixedThreadPool(4)
 
-    /** Open editor sessions by project folder, shared with the UI's own view models. */
-    private val sessions = ConcurrentHashMap<String, MobileSession>()
+    /** Open editor sessions — one shared object per project, with the UI (see [SessionHub]). */
+    private val hub: SessionHub get() = SessionHub
 
-    /** Exports by job id. */
-    private data class Job(val session: MobileSession, val output: String, @Volatile var done: String? = null, @Volatile var error: String? = null)
+    /** The server's own reference per project it has touched (one each). */
+    private val held = ConcurrentHashMap<String, MobileSession>()
+
+    /** An export job: holds its own hub reference (see [startExportJob]). */
+    private data class Job(
+        val path: String,
+        val session: MobileSession,
+        val output: String,
+        @Volatile var done: String? = null,
+        @Volatile var error: String? = null,
+    )
 
     private val jobs = ConcurrentHashMap<String, Job>()
     private var jobSeq = 0
@@ -256,22 +266,22 @@ object AgentServer {
             "project.get" -> viewOf(runCommands { openSession(request.getString("path")).view() })
             "project.document" -> JSONObject(openSession(request.getString("path")).document())
             "project.save" -> {
-                val s = openSession(request.getString("path"))
+                val path = request.getString("path")
+                val s = openSession(path)
                 runCommands { s.save() }
                 JSONObject().put("saved", true)
             }
             "project.close" -> {
                 val path = request.getString("path")
                 if (request.optBoolean("save", false)) {
-                    sessions[path]?.let { s -> runCommands { s.save() } }
+                    held[path]?.let { s -> runCommands { s.save() } }
                 }
-                sessions.remove(path)
+                held.remove(path)?.let { hub.release(path, it) }
                 JSONObject().put("closed", true)
             }
-            "project.setVideo" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
+            "project.setVideo" -> viewOf(edited(request.getString("path")) {
                 val v = request.getJSONObject("video")
-                s.apply(
+                apply(
                     JSONObject().put("op", "setTimelineVideo")
                         .put("width", v.getInt("width"))
                         .put("height", v.getInt("height"))
@@ -300,66 +310,55 @@ object AgentServer {
                 val s = openSession(request.getString("path"))
                 s.importSound(request.getString("file"))
             })
-            "edit.apply" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
+            "edit.apply" -> viewOf(edited(request.getString("path")) {
                 val command = request.get("command")
                 val json = if (command is String) command else command.toString()
                 val gesture = request.optString("gesture").takeIf { it.isNotEmpty() }
-                s.apply(json, gesture)
+                apply(json, gesture)
             })
             // one session method each, so agents need no op tables: mirrors the
             // bridge's edit.* tools one to one.
-            "session.addToMain" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.addToMain(request.getJSONArray("mediaIds").toStringList(), request.optLong("atUs", 0L))
+            "session.addToMain" -> viewOf(edited(request.getString("path")) {
+                addToMain(request.getJSONArray("mediaIds").toStringList(), request.optLong("atUs", 0L))
             })
-            "session.addOverlay" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.addOverlay(request.getString("mediaId"), request.getLong("atUs"))
+            "session.addOverlay" -> viewOf(edited(request.getString("path")) {
+                addOverlay(request.getString("mediaId"), request.getLong("atUs"))
             })
-            "session.addAudio" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.addAudio(request.getString("mediaId"), request.getLong("atUs"))
+            "session.addAudio" -> viewOf(edited(request.getString("path")) {
+                addAudio(request.getString("mediaId"), request.getLong("atUs"))
             })
-            "session.addSticker" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.addSticker(request.getString("mediaId"), request.getLong("atUs"), request.getLong("durationUs"))
+            "session.addSticker" -> viewOf(edited(request.getString("path")) {
+                addSticker(request.getString("mediaId"), request.getLong("atUs"), request.getLong("durationUs"))
             })
-            "session.addText" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
+            "session.addText" -> viewOf(edited(request.getString("path")) {
                 val style = request.get("style")
-                s.addText(request.getLong("atUs"), request.getLong("durationUs"), if (style is String) style else style.toString())
+                addText(request.getLong("atUs"), request.getLong("durationUs"), if (style is String) style else style.toString())
             })
-            "session.delete" -> viewOf(runCommands {
-                openSession(request.getString("path")).delete(request.getJSONArray("clipIds").toStringList())
+            "session.delete" -> viewOf(edited(request.getString("path")) {
+                delete(request.getJSONArray("clipIds").toStringList())
             })
-            "session.split" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.split(request.getJSONArray("clipIds").toStringList(), request.getLong("atUs"))
+            "session.split" -> viewOf(edited(request.getString("path")) {
+                split(request.getJSONArray("clipIds").toStringList(), request.getLong("atUs"))
             })
-            "session.trim" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.trim(request.getString("clipId"), request.getBoolean("head"), request.getLong("deltaUs"))
+            "session.trim" -> viewOf(edited(request.getString("path")) {
+                trim(request.getString("clipId"), request.getBoolean("head"), request.getLong("deltaUs"))
             })
-            "session.moveClip" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.moveClip(request.getString("clipId"), request.optString("trackId"), request.getLong("startUs"))
+            "session.moveClip" -> viewOf(edited(request.getString("path")) {
+                moveClip(request.getString("clipId"), request.optString("trackId"), request.getLong("startUs"))
             })
-            "session.reorderMain" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
-                s.reorderMain(request.getString("clipId"), request.getInt("index").toUInt())
+            "session.reorderMain" -> viewOf(edited(request.getString("path")) {
+                reorderMain(request.getString("clipId"), request.getInt("index").toUInt())
             })
-            "session.update" -> viewOf(runCommands {
-                val s = openSession(request.getString("path"))
+            "session.update" -> viewOf(edited(request.getString("path")) {
                 val patch = request.get("patch")
-                s.apply(
+                apply(
                     JSONObject().put("op", "updateClip").put("clipId", request.getString("clipId"))
                         .put("patch", if (patch is String) JSONObject(patch) else patch).toString(),
                     null,
                 )
             })
-            "edit.undo" -> viewOf(runCommands { openSession(request.getString("path")).undo() })
-            "edit.redo" -> viewOf(runCommands { openSession(request.getString("path")).redo() })
+            "edit.undo" -> viewOf(edited(request.getString("path")) { undo() })
+            "edit.redo" -> viewOf(edited(request.getString("path")) { redo() })
             "catalogue.list" -> JSONArray(runCommands {
                 val list: List<io.github.artcraftandroid.capcraft.core.PackageInfo> =
                     packages(request.optString("kind").takeIf { it.isNotEmpty() } ?: "effect")
@@ -409,7 +408,19 @@ object AgentServer {
     private fun JSONArray.toStringList(): List<String> = (0 until length()).map { getString(it) }
 
     private fun openSession(path: String): MobileSession =
-        sessions.getOrPut(path) { runCommands { MobileSession.open(path) } }
+        held.getOrPut(path) {
+            hub.get(path) ?: hub.publishNew(path, runCommands { MobileSession.open(path) })
+        }
+
+    /**
+     * Runs a mutating edit on the shared session, then hands the fresh
+     * view to the open editor (if any), which swaps it in live.
+     */
+    private fun edited(path: String, op: MobileSession.() -> TimelineView): TimelineView {
+        val view = runCommands { openSession(path).op() }
+        hub.publish(path, view)
+        return view
+    }
 
     private fun viewOf(view: TimelineView): JSONObject =
         JSONObject()
@@ -462,20 +473,23 @@ object AgentServer {
     private fun status(): JSONObject = JSONObject()
         .put("running", true)
         .put("address", address())
-        .put("sessions", sessions.size)
+        .put("sessions", hub.size())
         .put("jobs", jobs.size)
 
     private fun startExportJob(request: JSONObject): JSONObject {
         val ctx = app ?: throw IllegalStateException("The app is not ready.")
-        val session = openSession(request.getString("path"))
+        val path = request.getString("path")
+        val session = openSession(path)
         val view = runCommands { session.view() }
         if (view.durationUs <= 0) throw IllegalArgumentException("Add media first.")
+        // the job keeps the session alive past project.close; freed at its end.
+        hub.publishNew(path, session)
         val out = request.getString("output")
         val short = request.optInt("resolution", view.width.coerceAtMost(view.height).toInt().coerceAtLeast(480))
         val fps = request.optInt("fps", 30)
         val wh = runCommands { exportSize(view.width, view.height, short.toUInt()) }
         val jobId = "job${++jobSeq}"
-        val job = Job(session, out)
+        val job = Job(path, session, out)
         jobs[jobId] = job
         runCommands {
             startExport(
@@ -509,9 +523,15 @@ object AgentServer {
         val done = job.done
         val error = job.error
         return when {
-            error != null -> JSONObject().put("job", jobId).put("state", if (error == "cancelled") "cancelled" else "failed").put("error", error)
+            error != null -> {
+                // terminal: a second poll would say "unknown job", so answer fully here.
+                jobs.remove(jobId)
+                hub.release(job.path, job.session)
+                JSONObject().put("job", jobId).put("state", if (error == "cancelled") "cancelled" else "failed").put("error", error)
+            }
             done != null -> {
                 jobs.remove(jobId)
+                hub.release(job.path, job.session)
                 JSONObject().put("job", jobId).put("state", "finished").put("output", done)
             }
             else -> JSONObject().put("job", jobId).put("state", "running").put("output", job.output)
@@ -522,6 +542,7 @@ object AgentServer {
         val job = jobs[jobId] ?: return false
         runCommands { runCatching { cancelExport() } }
         job.error = job.error ?: "cancelled"
+        // the next export.status reports (and frees) the terminal state.
         return true
     }
 

@@ -192,7 +192,6 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
             ExportScreen(vm, onClose = { exporting = false }, onHome = { exporting = false; leave() })
         }
         Toast(vm.message, bottom = with(density) { belowPreview.toDp() } + 28.dp) { vm.message = null }
-        if (vm.externalChange) ExternalChangeDialog(vm)
     }
 }
 
@@ -573,35 +572,6 @@ private fun Scrubber(vm: EditorViewModel) {
         drawLine(Color.White, Offset(r, cy), Offset(x, cy), 1.5.dp.toPx())
         drawCircle(Palette.Black, r - 1.dp.toPx(), Offset(x, cy))
         drawCircle(Color.White, r - 1.dp.toPx(), Offset(x, cy), style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-    }
-}
-
-@Composable
-private fun ExternalChangeDialog(vm: EditorViewModel) {
-    Box(
-        Modifier.fillMaxSize().background(Color(0x88000000)).clickable(enabled = true, onClick = {}),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier.padding(horizontal = 40.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.Panel).padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                "An AI agent changed this project. Reload to see its edits? Your unsaved changes will be replaced.",
-                style = Type.Body.copy(textAlign = androidx.compose.ui.text.style.TextAlign.Center),
-            )
-            Spacer(Modifier.height(20.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)) {
-                Box(
-                    Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(6.dp)).background(Palette.Card).clickable(onClick = vm::dismissExternalChange),
-                    contentAlignment = Alignment.Center,
-                ) { Text("Later", style = Type.BodyStrong) }
-                Box(
-                    Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(6.dp)).background(Palette.Accent).clickable(onClick = vm::reloadFromDisk),
-                    contentAlignment = Alignment.Center,
-                ) { Text("Reload", style = Type.BodyStrong.copy(color = Palette.OnAccent)) }
-            }
-        }
     }
 }
 
