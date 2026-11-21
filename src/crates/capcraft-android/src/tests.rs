@@ -1698,3 +1698,54 @@ fn a_drag_shows_what_the_playhead_at_rest_will() {
         delete_project(made.path).expect("deleted");
     }
 }
+
+#[test]
+fn elements_stack_as_one_tier_and_rows_grow() {
+    start();
+    let (Some(a), Some(b)) = (media("cc-a-bars-16x9.mp4"), media("cc-b-testsrc-9x16.mp4")) else {
+        return;
+    };
+    let made = create_project("Tier".to_owned(), 1080, 1920, 30).expect("made");
+    let session = MobileSession::open(made.path.clone()).expect("opens");
+    let a = session.import(a).expect("imports").id;
+    let b = session.import(b).expect("imports").id;
+    session.add_to_main(vec![a], 0).expect("placed");
+    let overlay = session.add_overlay(b, 0).expect("an overlay").created_id;
+    let view = session
+        .add_text(0, 2_000_000, String::new())
+        .expect("a title");
+    let title = view.created_id.clone();
+    // restack crosses overlay<->text freely now (one elements tier)
+    let view = session.restack(title.clone(), -1).expect("restacked");
+    let row_of = |id: &str, view: &crate::session::TimelineView| {
+        view.rows
+            .iter()
+            .position(|row| row.clips.iter().any(|clip| clip.id == id))
+    };
+    let (Some(under), Some(over)) = (row_of(&title, &view), row_of(&overlay, &view)) else {
+        panic!("both rows exist");
+    };
+    assert!(under < over, "the title went under the overlay");
+    // stack_to_row to the top display row (a gap row) grows the stack
+    let before = view.rows.len();
+    let view = session.stack_to_row(title.clone(), 0).expect("to top");
+    assert_eq!(view.rows.len(), before + 1, "a fresh row grew above");
+    assert_eq!(row_of(&title, &view), Some(0), "the title sits on the new top row");
+    // audio stays in audio: a sound dropped on an elements row refuses
+    let sound = session
+        .import_sound(media("cc-a-bars-16x9.mp4").expect("clip"))
+        .expect("imports")
+        .id;
+    let view = session.add_audio(sound, 0).expect("sound");
+    let clip = view.created_id.clone();
+    let view = session.stack_to_row(clip.clone(), 0).expect("refused");
+    let audio_row = view
+        .rows
+        .iter()
+        .position(|row| row.clips.iter().any(|clip| clip.id == clip));
+    assert!(
+        audio_row.is_some_and(|i| view.rows[i].kind == RowKind::Audio),
+        "audio never leaks into elements"
+    );
+    delete_project(made.path).expect("deleted");
+}

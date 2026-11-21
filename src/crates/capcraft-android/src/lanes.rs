@@ -184,6 +184,13 @@ pub(crate) fn role(timeline: &Timeline, index: usize) -> Option<RowKind> {
 pub const STICKER_PREFIX: &str = "sticker-";
 
 /// The row a clip of this kind belongs on (never Main: that is a place).
+///
+/// Text, shapes, stickers, overlays, effects and filters all share one
+/// elements tier: the phone timeline shows them as Elements rows that hold
+/// any mix of kinds, so a title can sit under an overlay and back. They
+/// keep distinct [`RowKind`]s (the panels and the kind tiles still need to
+/// know a title from an overlay), but every stacking helper treats the
+/// whole tier as one.
 pub(crate) fn kind_of(clip: &Clip) -> RowKind {
     match clip.kind {
         ClipKind::Image if clip.name.starts_with(STICKER_PREFIX) => RowKind::Text,
@@ -193,6 +200,22 @@ pub(crate) fn kind_of(clip: &Clip) -> RowKind {
         ClipKind::Text | ClipKind::Shape => RowKind::Text,
         ClipKind::Layer => layer_kind(clip.video_effects.first().map(|link| link.id.as_str())),
     }
+}
+
+/// Whether two lanes stack in the same tier: the elements tier (overlay,
+/// text, effect, filter) moves as one, so titles and pictures restack
+/// freely among each other.
+pub(crate) fn same_tier(a: RowKind, b: RowKind) -> bool {
+    fn tier(kind: RowKind) -> u8 {
+        match kind {
+            RowKind::Main => 0,
+            RowKind::Audio => 1,
+            // one elements tier above the main track: overlays, titles,
+            // stickers, effects and filters all stack together
+            RowKind::Overlay | RowKind::Text | RowKind::Effect | RowKind::Filter => 2,
+        }
+    }
+    tier(a) == tier(b)
 }
 
 /// A layer applying `effect_id` is a filter row's when the package is a look.

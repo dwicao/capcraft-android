@@ -512,6 +512,19 @@ add(edit_tool(
 ))
 
 add(edit_tool(
+    "clip_stack_row", "Move a clip to a timeline row",
+    "Moves `clipId` to display row `row` (top-down as the phone timeline "
+    "shows them: Elements rows, then main, then audio; gap rows grow the "
+    "stack with a fresh lane). Same tier only: pictures/titles stay in "
+    "Elements, audio in audio, main never moves. One undo step.",
+    "stackToRow",
+    {"path": string("The project folder."),
+     "clipId": string("The clip to move."),
+     "row": integer("Display row index, top-down (0 is the topmost row).")},
+    ("path", "clipId", "row"),
+))
+
+add(edit_tool(
     "clip_update", "Change a clip's properties",
     "Changes clip properties: `patch` holds the engine's field names (volume, "
     "opacity, flipH, videoEffects, ...).",
@@ -612,6 +625,7 @@ EDIT_METHODS = {
     "moveClip": "session.moveClip",
     "reorderMain": "session.reorderMain",
     "restack": "session.restack",
+    "stackToRow": "session.stackToRow",
     "arrange": "session.arrange",
     "toMain": "session.toMain",
     "toOverlay": "session.toOverlay",

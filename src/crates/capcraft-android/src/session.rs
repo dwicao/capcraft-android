@@ -1430,11 +1430,14 @@ impl MobileSession {
         if from == 0 || kind.is_none() {
             return Ok(self.view());
         }
+        // the whole tier restacks together: overlays, titles, effects and
+        // filters move among each other, skipping the main track and audio.
         // an effect keeps to the lanes that treat what it treats
         let all = lanes::reaches_all(&timeline, from);
         let peers: Vec<usize> = (1..timeline.tracks.len())
             .filter(|index| {
-                lanes::role(&timeline, *index) == kind
+                lanes::role(&timeline, *index)
+                    .is_some_and(|peer| kind.is_some_and(|kind| lanes::same_tier(kind, peer)))
                     && lanes::reaches_all(&timeline, *index) == all
             })
             .collect();
@@ -1531,6 +1534,15 @@ impl MobileSession {
         if from == 0 || from == target || (target == 0 && !above) {
             return Ok(self.view());
         }
+        // elements stack as one tier (overlay/text/effect/filter mix freely);
+        // main-track and audio lanes never take part in an arrange
+        let tier_of = |index: usize| lanes::role(&timeline, index);
+        let (Some(from_kind), Some(target_kind)) = (tier_of(from), tier_of(target)) else {
+            return Ok(self.view());
+        };
+        if !lanes::same_tier(from_kind, target_kind) {
+            return Ok(self.view());
+        }
         let lane = timeline.tracks[from].id.clone();
         let shared = timeline
             .clips
@@ -1580,6 +1592,108 @@ impl MobileSession {
             track_id: timeline.tracks[from].id.clone(),
             index: index.max(1),
         }])
+    }
+
+    /// Moves `clip_id` to the timeline row the phone UI shows at `row`:
+    /// rows run top-down, the front of the stack first, as
+    /// [`lanes::rows`] lists them. `row` past either end clamps to that
+    /// end; the clip's own row is skipped when counting. A gap after the
+    /// last row of the clip's tier mints a fresh lane there (a new Elements
+    /// or Audio row), and a gap inside the tier puts the lane there only
+    /// when the neighbours leave no same-tier lane to join — so dragging
+    /// onto empty space grows the stack, while dropping on a row joins it.
+    /// The main track never moves and nothing lands on it; a main-track
+    /// clip keeps its order, an audio clip stays inside audio, a picture
+    /// or title stays inside elements. One undo step.
+    pub fn stack_to_row(&self, clip_id: String, row: i64) -> Result<TimelineView, MobileError> {
+        let mut state = self.lock();
+        let gesture = self.gesture();
+        let result = (|| {
+            let timeline = state.session.project().active().clone();
+            let clip = timeline
+                .clips
+                .iter()
+                .find(|clip| clip.id == clip_id)
+                .cloned()
+                .ok_or_else(|| "that clip is gone".to_owned())?;
+            let rows = lanes::rows(state.session.project());
+            let Some(from) = rows.iter().position(|row| row.track_id == clip.track_id) else {
+                return Ok::<_, MobileError>(None);
+            };
+            let places: Vec<usize> = (0..rows.len()).filter(|index| *index != from).collect();
+            if places.is_empty() {
+                return Ok(None);
+            }
+            let want = row.clamp(0, places.len() as i64 - 1) as usize;
+            let target = places[want];
+            let from_kind = rows[from].kind;
+            let target_kind = rows[target].kind;
+            if target_kind == RowKind::Main || !lanes::same_tier(from_kind, target_kind) {
+                return Ok(None);
+            }
+            let start = clip.start;
+            // the target row's own lane first, when it is free over the span
+            let target_lane = rows[target].track_id.clone();
+            let mut lane: Option<String> = None;
+            if timeline.is_free(&target_lane, start, clip.duration, &[clip_id.as_str()]) {
+                lane = Some(target_lane.clone());
+            }
+            // else the nearest free same-tier lane
+            if lane.is_none() {
+                lane = timeline
+                    .tracks
+                    .iter()
+                    .filter(|track| {
+                        rows.iter().any(|row| {
+                            row.track_id == track.id
+                                && lanes::same_tier(row.kind, from_kind)
+                        })
+                    })
+                    .filter(|track| {
+                        timeline.is_free(&track.id, start, clip.duration, &[clip_id.as_str()])
+                    })
+                    .map(|track| track.id.clone())
+                    .next();
+            }
+            // else a fresh lane beside the target row's lane (a gap row grows
+            // the stack: over it when the drop is above, under it when below)
+            let lane = match lane {
+                Some(lane) => lane,
+                None => {
+                    let at = timeline
+                        .tracks
+                        .iter()
+                        .position(|track| track.id == target_lane)
+                        .unwrap_or(timeline.tracks.len());
+                    // UI rows run top-down (front first), engine lanes
+                    // bottom-up: a UI row above the clip's sits on a higher
+                    // engine lane, and vice versa
+                    let index = if target < from { at + 1 } else { at };
+                    Self::apply_all(
+                        &mut state,
+                        vec![Command::InsertTrack { index: index.max(1) }],
+                        Some(&gesture),
+                    )?
+                    .ok_or_else(|| "the new lane has no id".to_owned())?
+                }
+            };
+            let placed = timeline.nearest_free_start(&lane, start, clip.duration, &[clip_id.as_str()]);
+            Self::apply_all(
+                &mut state,
+                vec![Command::MoveClips {
+                    moves: vec![concat_project::commands::ClipMove {
+                        clip_id: clip_id.clone(),
+                        track_id: lane,
+                        start: placed,
+                    }],
+                }],
+                Some(&gesture),
+            )?;
+            Ok::<_, MobileError>(Some(clip_id.clone()))
+        })();
+        state.session.end_gesture();
+        let created = result?;
+        Ok(Self::changed(&mut state, created))
     }
 
     /// Moves a main-track clip onto an overlay row at the same time; the

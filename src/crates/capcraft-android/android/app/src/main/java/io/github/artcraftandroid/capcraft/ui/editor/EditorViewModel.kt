@@ -707,6 +707,15 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         edit(select = { id }) { restack(id, 1) }
     }
 
+    /** Moves the selected clip to display row [row] (gap rows grow the stack). */
+    fun stackToRow(row: Int) {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        edit(select = { id }) { stackToRow(id, row.toLong()) }
+    }
+
     /** Moves the selected clip one lane towards the back of the stack (down on screen). */
     fun stackBackward() {
         val id = selected ?: run {
