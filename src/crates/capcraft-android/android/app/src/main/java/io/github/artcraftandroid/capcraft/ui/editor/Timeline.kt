@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.pointerInteropFilter
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -371,6 +372,30 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
         Canvas(
             Modifier
                 .fillMaxSize()
+                // DeX/desktop mouse wheel via raw MotionEvent (pointerInteropFilter):
+                // Compose's scroll deltas are not exposed on this Android version,
+                // but the framework delivers ACTION_SCROLL to views. Vertical wheel
+                // scrubs the timeline (Shift forces it too); Ctrl+wheel zooms.
+                // Return false so the event keeps flowing to the gesture input below.
+                .pointerInteropFilter { event ->
+                    if (event.action == android.view.MotionEvent.ACTION_SCROLL) {
+                        val vScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
+                        val hScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)
+                        val delta = vScrollAxis + hScrollAxis
+                        if (delta != 0f && event.isCtrlPressed) {
+                            vm.zoomTimeline(if (delta > 0f) 1f / 1.15f else 1.15f)
+                            true
+                        } else if (delta != 0f) {
+                            val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
+                            vm.scrub(vm.playhead + (delta * 48f / pxPerUs).toLong())
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                }
                 .pointerInput(vm) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
