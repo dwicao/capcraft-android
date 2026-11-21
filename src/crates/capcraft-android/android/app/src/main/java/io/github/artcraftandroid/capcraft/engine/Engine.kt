@@ -15,8 +15,8 @@ object Threads {
     /** The preview: one picture at a time, the newest wins. */
     val preview: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
 
-    /** Timeline filmstrips, waveforms and covers. */
-    val thumbnails: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(2)
+    /** Timeline filmstrips, waveforms and covers: a few at once, so a big project warms fast. */
+    val thumbnails: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(3)
 }
 
 /** A message for the user from anything the engine (or the system) threw. */

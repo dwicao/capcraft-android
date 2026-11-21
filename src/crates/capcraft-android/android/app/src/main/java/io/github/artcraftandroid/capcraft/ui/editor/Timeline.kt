@@ -314,16 +314,17 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     }
     // a gesture reads the rows as they are now: a press that selects a clip opens its kind mid-gesture
     val currentRows = rememberUpdatedState(rows)
-    // warm the thumbnail cache the moment a timeline loads: one full-span
-    // strip per file first (every clip paints instantly via sub-crop), then
-    // each clip's own strip for tile detail — no waiting for a scroll.
-    // preload only enqueues requests, so it runs inline.
+    // Warm the cache the moment a timeline loads, in the background: one strip per file that
+    // covers everything the timeline shows of it, at both row heights the timeline draws (the
+    // thin rows and the taller main track). Every clip paints at once from that strip — no
+    // scroll needed — and tile detail lands per clip only as it comes into view.
     androidx.compose.runtime.LaunchedEffect(timeline) {
         val t = timeline
         if (t != null) {
-            val tileH = (Track.ROW * dp).roundToInt().coerceAtLeast(16)
+            val rowTall = (Track.ROW * dp * 0.8f).roundToInt().coerceAtLeast(16)
+            val mainTall = (Track.MAIN * dp * 0.8f).roundToInt().coerceAtLeast(16)
             val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-            Thumbs.preload(t.rows, tileH, pxPerUs)
+            Thumbs.preload(t.rows, listOf(rowTall, mainTall), pxPerUs)
         }
     }
 
@@ -1011,6 +1012,16 @@ private fun DrawScope.drawFitted(b: Bitmap, r: Rect) {
     )
 }
 
+private fun DrawScope.drawCrop(cover: Thumbs.Cover, r: Rect) {
+    drawImage(
+        cover.bmp.asImageBitmap(),
+        srcOffset = IntOffset(cover.x, 0),
+        srcSize = IntSize(cover.width.coerceAtLeast(1), cover.bmp.height),
+        dstOffset = IntOffset(r.left.roundToInt(), r.top.roundToInt()),
+        dstSize = IntSize(r.width.roundToInt().coerceAtLeast(1), r.height.roundToInt().coerceAtLeast(1)),
+    )
+}
+
 private fun DrawScope.drawCropped(b: Bitmap, r: Rect) {
     val img = b.asImageBitmap()
     val scale = max(r.width / b.width, r.height / b.height)
@@ -1209,10 +1220,10 @@ private fun DrawScope.drawFrames(clip: ClipView, r: Rect, layout: Layout) {
     val from = clip.sourceStartUs
     val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
     val stripH = (tile * 0.8f).roundToInt().coerceAtLeast(16)
-    // A covering strip (a parent's span, or the preload's full-file span)
-    // paints at once, stretched over the body: no decode, no queue wait.
-    Thumbs.stripCovering(clip.path, from, to, stripH)?.let { covering ->
-        drawCropped(covering, r)
+    // A covering strip (a parent's span, or the preload's whole-file span) paints at once,
+    // drawn from its own pixels: no decode, no queue, and no crop bitmap per frame.
+    Thumbs.cover(clip.path, from, to, stripH)?.let { covering ->
+        drawCrop(covering, r)
         return
     }
     // Off-screen clips must not join the decode queue: after a big split

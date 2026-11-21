@@ -3,4 +3,6 @@
     <cache-path name="exports" path="exports/" />
     <!-- what the phone's camera records for Shoot and record, before the project takes a copy -->
     <cache-path name="captures" path="captures/" />
+    <!-- an update the app downloaded, handed to the system's installer -->
+    <cache-path name="updates" path="updates/" />
 </paths>

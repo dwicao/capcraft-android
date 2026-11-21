@@ -1,6 +1,8 @@
 package io.github.artcraftandroid.capcraft.ui.editor
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.compose.runtime.mutableIntStateOf
 import io.github.artcraftandroid.capcraft.core.filmstrip
@@ -8,104 +10,180 @@ import io.github.artcraftandroid.capcraft.core.still
 import io.github.artcraftandroid.capcraft.core.waveform
 import io.github.artcraftandroid.capcraft.engine.Threads
 import io.github.artcraftandroid.capcraft.engine.toBitmap
+import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 /**
- * The timeline's pictures and waveforms, made off the main thread and kept in memory. A miss starts
- * the work and returns null; [version] changes when anything arrives, so the timeline redraws.
+ * The timeline's pictures and waveforms, made off the main thread and kept in memory — and, for
+ * the strips that cover a whole file, on disk too, so reopening a project paints at once.
+ *
+ * A miss starts the work and returns null; [version] changes when anything arrives, so the
+ * timeline redraws. Nothing here allocates while drawing: a covering strip is handed back as a
+ * [Cover] that names its own crop, so a hundred clips sharing one file share one bitmap and one
+ * draw call each.
  */
 object Thumbs {
     val version = mutableIntStateOf(0)
     private val scope = CoroutineScope(SupervisorJob() + Threads.thumbnails)
     // android.util.LruCache is NOT thread-safe, and strips/waves are filled
-    // from two thumbnail threads while the draw thread reads: every access
-    // goes under these locks. An unguarded stampede (an agent splitting one
-    // clip into a hundred) corrupted the map and bodies stayed blank.
-    private val stripLock = Any()
-    private val waveLock = Any()
-    private val strips = object : LruCache<String, Bitmap>(64 * 1024 * 1024) {
+    // from the thumbnail threads while the draw thread reads: every access
+    // goes under this lock.
+    private val lock = Any()
+    private val strips = object : LruCache<String, Bitmap>(96 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+
+        override fun entryRemoved(evicted: Boolean, key: String, oldValue: Bitmap, newValue: Bitmap?) {
+            // keep the covering index in step with what is actually cached
+            synchronized(lock) { covering.remove(key) }
+        }
     }
     private val waves = LruCache<String, FloatArray>(256)
     private val pending = ConcurrentHashMap.newKeySet<String>()
 
-    private fun stripGet(key: String): Bitmap? = synchronized(stripLock) { strips.get(key) }
-    private fun stripPut(key: String, value: Bitmap) = synchronized(stripLock) { strips.put(key, value) }
-    private fun waveGet(key: String): FloatArray? = synchronized(waveLock) { waves.get(key) }
-    private fun wavePut(key: String, value: FloatArray) = synchronized(waveLock) { waves.put(key, value) }
+    /** A strip of a file, and the part of it a clip shows: drawn straight from the bitmap. */
+    class Cover(val bmp: Bitmap, val x: Int, val width: Int)
 
-    /**
-     * A cached strip of [path] whose time range covers [fromUs]..[toUs],
-     * cropped to it — so the children of a split reuse the parent's already
-     * decoded frames instead of decoding the same footage again. Only the
-     * height must match: tiles slice their own range evenly, so any covering
-     * strip sub-crops cleanly by time fraction.
-     */
-    fun stripCovering(path: String, fromUs: Long, toUs: Long, height: Int): Bitmap? =
-        synchronized(stripLock) {
-            val prefix = "s|$path|"
-            var src: Bitmap? = null
-            var srcFrom = 0L
-            var bestSpan = Long.MAX_VALUE
-            for ((key, bmp) in strips.snapshot()) {
-                if (!key.startsWith(prefix)) continue
-                val rest = key.removePrefix(prefix).split('|')
-                if (rest.size != 4) continue
-                val h = rest[3].toIntOrNull() ?: continue
-                if (h != height) continue
-                val f = rest[0].toLongOrNull() ?: continue
-                val t = rest[1].toLongOrNull() ?: continue
-                if (f > fromUs || t < toUs) continue
-                val span = t - f
-                if (span > 0 && span < bestSpan) {
-                    bestSpan = span
-                    src = bmp
-                    srcFrom = f
+    /** The strips that cover a whole file, keyed `path|height`, smallest span first. */
+    private val covering = HashMap<String, MutableList<Entry>>()
+
+    private class Entry(val key: String, val fromUs: Long, val toUs: Long, val bmp: Bitmap)
+
+    private fun stripGet(key: String): Bitmap? = synchronized(lock) { strips.get(key) }
+
+    private fun stripPut(key: String, value: Bitmap): Bitmap {
+        synchronized(lock) {
+            strips.put(key, value)
+            // every strip can cover a span, so every one is indexed; the
+            // shortest span that covers a clip wins, which keeps tiles sharp
+            if (key.startsWith("s|")) {
+                val parts = key.split('|')
+                if (parts.size == 6) {
+                    val path = parts[1]
+                    val from = parts[2].toLongOrNull() ?: 0L
+                    val to = parts[3].toLongOrNull() ?: 0L
+                    val height = parts[5].toIntOrNull() ?: 0
+                    val list = covering.getOrPut("$path|$height") { mutableListOf() }
+                    list.removeAll { it.key == key }
+                    list.add(Entry(key, from, to, value))
+                    list.sortBy { it.toUs - it.fromUs }
                 }
             }
-            val bmp = src ?: return@synchronized null
-            val x0 = ((fromUs - srcFrom).toFloat() / bestSpan * bmp.width).toInt().coerceIn(0, bmp.width - 1)
-            val x1 = ((toUs - srcFrom).toFloat() / bestSpan * bmp.width).toInt().coerceIn(x0 + 1, bmp.width)
-            if (x1 - x0 < 2) return@synchronized null
-            runCatching { Bitmap.createBitmap(bmp, x0, 0, x1 - x0, bmp.height) }.getOrNull()
         }
+        return value
+    }
+
+    private fun waveGet(key: String): FloatArray? = synchronized(lock) { waves.get(key) }
+    private fun wavePut(key: String, value: FloatArray) = synchronized(lock) { waves.put(key, value) }
+
+    // --- the disk cache, for whole-file strips -------------------------------------------
+
+    private var diskDir: File? = null
+
+    /** Told the app's context once, so whole-file strips can outlive the process. */
+    fun init(context: Context) {
+        diskDir = File(context.cacheDir, "thumbs").also { it.mkdirs() }
+    }
+
+    private fun diskFile(path: String, fromUs: Long, toUs: Long, height: Int): File? {
+        val dir = diskDir ?: return null
+        val file = File(path)
+        // the file's size and stamp go into the key: a replaced file is not
+        // served yesterday's pictures
+        val stamp = "${path}|${file.length()}|${file.lastModified()}|$fromUs|$toUs|$height"
+        val digest = MessageDigest.getInstance("SHA-1").digest(stamp.toByteArray())
+        val name = digest.joinToString("") { "%02x".format(it) } + ".png"
+        return File(dir, name)
+    }
+
+    private fun diskRead(file: File): Bitmap? = runCatching {
+        if (!file.isFile) return null
+        BitmapFactory.decodeFile(file.absolutePath)
+    }.getOrNull()
+
+    private fun diskWrite(file: File, bmp: Bitmap) {
+        runCatching {
+            if (file.isFile) return
+            file.outputStream().use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+            pruneDisk()
+        }
+    }
+
+    /** Keeps the thumbnail cache under about 192 MB, oldest first. */
+    private fun pruneDisk() {
+        val dir = diskDir ?: return
+        val files = dir.listFiles() ?: return
+        val total = files.sumOf { it.length() }
+        if (total <= 192L * 1024 * 1024) return
+        var left = total
+        files.sortedBy { it.lastModified() }.forEach { file ->
+            if (left <= 128L * 1024 * 1024) return@forEach
+            left -= file.length()
+            file.delete()
+        }
+    }
 
     /**
-     * Warms the cache for a freshly opened timeline: one full-span strip per
-     * media file first (so every clip paints instantly via [stripCovering]),
-     * then each clip's own strip for full tile detail. Keys match what
-     * drawing requests, so nothing decodes twice. Runs on the thumbnail
-     * threads; drawing picks results up as they land.
+     * The part of a cached strip of [path] that shows [fromUs]..[toUs], for a row [height]
+     * pixels tall — or null while nothing covering it has arrived yet. No bitmap is made: the
+     * caller draws the crop itself.
      */
-    fun preload(rows: List<io.github.artcraftandroid.capcraft.core.RowView>, tileH: Int, pxPerUs: Float) {
+    fun cover(path: String, fromUs: Long, toUs: Long, height: Int): Cover? = synchronized(lock) {
+        val list = covering["$path|$height"] ?: return@synchronized null
+        for (entry in list) {
+            if (entry.fromUs > fromUs || entry.toUs < toUs) continue
+            val span = entry.toUs - entry.fromUs
+            if (span <= 0) continue
+            val bmp = entry.bmp
+            val x0 = ((fromUs - entry.fromUs).toFloat() / span * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+            val x1 = ((toUs - entry.fromUs).toFloat() / span * bmp.width).toInt().coerceIn(x0 + 1, bmp.width)
+            if (x1 - x0 < 2) continue
+            return@synchronized Cover(bmp, x0, x1 - x0)
+        }
+        null
+    }
+
+    /**
+     * Warms the cache for a freshly opened timeline, in the background: one strip per media file
+     * covering everything the timeline shows of it, at each row height it is drawn at. Every clip
+     * then paints at once from that strip; tile-level detail arrives per clip only as it is drawn.
+     * Disk first, so a project opened before paints without decoding anything.
+     */
+    fun preload(
+        rows: List<io.github.artcraftandroid.capcraft.core.RowView>,
+        heights: List<Int>,
+        pxPerUs: Float,
+    ) {
         val videos = rows.flatMap { it.clips }.filter { it.kind == "video" }
         if (videos.isEmpty()) return
-        val height = (tileH * 0.8f).roundToInt().coerceAtLeast(16)
-        // full-span strips first: one decode per file covers every clip in it
         videos.groupBy { it.path }.forEach { (path, clips) ->
             val from = clips.minOf { it.sourceStartUs }
             val to = clips.maxOf { it.sourceStartUs + (it.durationUs * it.speed).toLong() }
-            strip(path, from, to, 60, height)
-        }
-        // then each clip's own strip, for per-tile detail
-        videos.forEach { clip ->
-            val from = clip.sourceStartUs
-            val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
-            val widthPx = ((to - from) * pxPerUs / 1_000_000f).coerceAtLeast(tileH.toFloat())
-            val needed = kotlin.math.ceil(widthPx / tileH).toInt().coerceAtLeast(1)
-            val count = when {
-                needed <= 4 -> needed
-                needed <= 8 -> 8
-                needed <= 16 -> 16
-                needed <= 32 -> 32
-                else -> 60
+            heights.distinct().forEach { height ->
+                val h = height.coerceAtLeast(16)
+                if (cover(path, from, to, h) != null) return@forEach
+                val key = "s|$path|$from|$to|60|$h"
+                if (!pending.add(key)) return@forEach
+                scope.launch {
+                    val put = runCatching {
+                        val cached = diskFile(path, from, to, h)?.let(::diskRead)
+                        if (cached != null) {
+                            cached
+                        } else {
+                            val made = filmstrip(path, from, to, 60u, h.toUInt()).toBitmap() ?: return@launch
+                            diskFile(path, from, to, h)?.let { file -> diskWrite(file, made) }
+                            made
+                        }
+                    }.getOrNull()
+                    if (put != null) stripPut(key, put)
+                    pending.remove(key)
+                    version.intValue++
+                }
             }
-            strip(clip.path, from, to, count, height)
         }
     }
 

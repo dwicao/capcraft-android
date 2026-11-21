@@ -35,6 +35,12 @@ class CapCraftApplication : Application() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        // the timeline's whole-file strips outlive a project (and the process)
+        io.github.artcraftandroid.capcraft.ui.editor.Thumbs.init(this)
+    }
+
     @Volatile
     private var engineLoaded = false
 

@@ -36,6 +36,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +45,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -91,6 +93,7 @@ import io.github.artcraftandroid.capcraft.ui.common.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -227,6 +230,7 @@ fun HomeScreen(
     var licences by remember { mutableStateOf(false) }
     var about by remember { mutableStateOf(false) }
     var automation by remember { mutableStateOf(false) }
+    var updates by remember { mutableStateOf(false) }
     /** 0 Edit, 1 Projects, 2 Me. */
     var tab by remember { mutableIntStateOf(0) }
     var searching by remember { mutableStateOf(false) }
@@ -401,6 +405,7 @@ fun HomeScreen(
                     onLicences = { licences = true },
                     onAbout = { about = true },
                     onAutomation = { automation = true },
+                    onUpdates = { updates = true },
                     onCleared = { message = it },
                 )
                 }
@@ -531,6 +536,7 @@ fun HomeScreen(
         if (about) AboutScreen(onBack = { about = false })
         if (licences) LicencesScreen(onBack = { licences = false })
         if (automation) AutomationScreen(onBack = { automation = false })
+        if (updates) UpdateScreen(onBack = { updates = false })
         Toast(message) { message = null }
     }
 }
@@ -1035,7 +1041,7 @@ private fun BottomBar(tab: Int, latest: ProjectSummary?, onTab: (Int) -> Unit) {
 
 /** The app's settings: one tall row a setting, its value or a chevron at the right. */
 @Composable
-private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onAutomation: () -> Unit, onCleared: (String) -> Unit) {
+private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onAutomation: () -> Unit, onUpdates: () -> Unit, onCleared: (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val version = remember { appVersion(context) }
@@ -1049,9 +1055,10 @@ private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onAutomation: () 
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             SettingRow("Clear cache", cache?.let(::size) ?: "") { clearing = true }
             SettingRow("Automation (AI agents)", null, onAutomation)
+            SettingRow("Check for updates", null, onUpdates)
             SettingRow("Licences", null, onLicences)
             SettingRow("About CapCraft", null, onAbout)
-            SettingRow("Version", version, null)
+            SettingRow("Version", version, { onUpdates() })
         }
     }
     if (clearing) {
@@ -1192,6 +1199,177 @@ private fun AutomationField(
 
 /** What CapCraft is, who made the engine under it, and that it is nobody else's app. */
 @Composable
+/**
+ * Settings → Check for updates: asks `version.json` what is published, shows what changed, and
+ * downloads the APK with a progress bar, the bytes done against the bytes promised, and a Cancel
+ * that stops it where it stands. Install hands the file to the system's own installer.
+ */
+@Composable
+private fun UpdateScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installedName = remember { appVersion(context) }
+    // the packaged code carries the ABI digit; the catalogue names the base (see Updates.baseCode)
+    val installedCode = remember {
+        Updates.baseCode(
+            runCatching { context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode }
+                .getOrDefault(0L),
+        )
+    }
+    var info by remember { mutableStateOf<Updates.Info?>(null) }
+    var checking by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var done by remember { mutableLongStateOf(0L) }
+    var total by remember { mutableLongStateOf(0L) }
+    var ready by remember { mutableStateOf<java.io.File?>(null) }
+    val cancel = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+
+    fun check() {
+        checking = true
+        error = null
+        scope.launch {
+            Updates.check()
+                .onSuccess { found ->
+                    info = found
+                    // a build fetched before the app was closed is still good
+                    ready = Updates.downloaded(context, found)
+                }
+                .onFailure { error = it.userMessage }
+            checking = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        val found = Updates.check()
+        found.onSuccess { info = it; ready = Updates.downloaded(context, it) }
+            .onFailure { error = it.userMessage }
+        checking = false
+    }
+
+    fun startDownload(target: Updates.Info) {
+        downloading = true
+        error = null
+        done = 0L
+        total = target.sizeBytes
+        cancel.set(false)
+        scope.launch {
+            Updates.download(context, target, cancelled = { cancel.get() }) { got, all ->
+                done = got
+                if (all > 0) total = all
+            }
+                .onSuccess { ready = it }
+                .onFailure { if (it !is Updates.Cancelled) error = it.userMessage }
+            downloading = false
+        }
+    }
+
+    Page("Updates", onBack) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+            Spacer(Modifier.height(8.dp))
+            Text("Installed version $installedName", style = ink(13f, color = Home.Muted))
+            Spacer(Modifier.height(16.dp))
+            when {
+                checking -> Row(Modifier.fillMaxWidth().padding(vertical = 28.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = Palette.Accent, strokeWidth = 2.dp, modifier = Modifier.size(22.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("Checking for updates…", style = ink(15f))
+                }
+
+                error != null && info == null -> {
+                    Text(error!!, style = ink(14f, color = Home.Muted))
+                    Spacer(Modifier.height(16.dp))
+                    UpdateButton("Try again") { check() }
+                }
+
+                else -> {
+                    val found = info
+                    if (found == null || !found.isNewerThan(installedCode)) {
+                        Text("You are on the latest version.", style = ink(16f, FontWeight.Medium))
+                        found?.let {
+                            Spacer(Modifier.height(6.dp))
+                            Text("The newest published build is ${it.version}.", style = ink(13f, color = Home.Muted))
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        UpdateButton("Check again") { check() }
+                    } else {
+                        Text("Version ${found.version} is available", style = ink(18f, FontWeight.SemiBold))
+                        if (found.releasedAt.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("Published ${found.releasedAt}", style = ink(13f, color = Home.Muted))
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text("What's new", style = ink(14f, FontWeight.SemiBold))
+                        Spacer(Modifier.height(6.dp))
+                        found.notes.forEach { note ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                                Text("•  ", style = ink(14f, color = Palette.Accent))
+                                Text(note, style = ink(14f, color = Home.Muted))
+                            }
+                        }
+                        Spacer(Modifier.height(18.dp))
+                        val file = ready
+                        when {
+                            file != null -> {
+                                UpdateButton("Install ${found.version}") {
+                                    if (!Updates.canInstall(context)) {
+                                        error = "Allow CapCraft to install unknown apps in the phone's settings, then try again."
+                                    } else if (!Updates.install(context, file)) {
+                                        error = "The system would not open the installer."
+                                    }
+                                }
+                            }
+
+                            downloading -> {
+                                val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                                LinearProgressIndicator(
+                                    progress = { fraction },
+                                    color = Palette.Accent,
+                                    trackColor = Home.Field,
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    "$(size(done)) of ${if (total > 0) size(total) else "…"}  ·  ${(fraction * 100).roundToInt()}%",
+                                    style = ink(14f, color = Home.Muted),
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                UpdateButton("Cancel", secondary = true) { cancel.set(true) }
+                            }
+
+                            else -> {
+                                if (found.sizeBytes > 0) {
+                                    Text(size(found.sizeBytes) + " to download", style = ink(13f, color = Home.Muted))
+                                    Spacer(Modifier.height(10.dp))
+                                }
+                                UpdateButton("Download") { startDownload(found) }
+                            }
+                        }
+                        if (error != null) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(error!!, style = ink(13f, color = Palette.Danger))
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/** A full-width action in the updates page. */
+@Composable
+private fun UpdateButton(label: String, secondary: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(46.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (secondary) Home.Field else Palette.Accent)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, style = ink(15f, FontWeight.SemiBold, if (secondary) Home.Ink else Color.White))
+    }
+}
+
 private fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val version = remember { appVersion(context) }
