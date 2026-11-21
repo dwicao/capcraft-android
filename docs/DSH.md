@@ -72,8 +72,8 @@ The bridge is deliberately a **thin** client: one TCP connection per call, one r
 - edits: `edit_apply` (any op-tagged command, times in seconds), `edit_undo`, `edit_redo`,
   plus one tool per timeline operation: `clip_add`, `clip_overlay`, `clip_audio`,
   `clip_sticker`, `title_add`, `clips_remove`, `clips_split`, `clip_trim`,
-  `clips_move`, `clip_reorder`, `clip_stack`, `clip_arrange`, `clip_to_main`,
-  `clip_to_overlay`, `clip_update`, `captions_add`
+  `clips_move`, `clip_reorder`, `clip_stack`, `clip_stack_row`, `clip_arrange`,
+  `clip_to_main`, `clip_to_overlay`, `clip_update`, `captions_add`
 - catalogue: `catalogue_list`
 - export: `export_start`, `export_status`, `export_wait`, `export_cancel`
 - preview: `preview_frame` (a PNG image part, or `--args '{"output": ...}'` to save)
