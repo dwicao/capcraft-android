@@ -366,6 +366,11 @@ private fun clipTools(vm: EditorViewModel, clip: ClipView, row: RowKind, pickers
         vm.select(null)
     }
     val duplicate = Tool("duplicate", "Duplicate", LucideIcons.Copy) { vm.edit(select = { it.createdId.ifEmpty { null } }) { duplicate(clip.id) } }
+    // touch-friendly copy/paste beside duplicate: the clipboard survives timeline edits
+    val copyPaste = listOfNotNull(
+        Tool("copy", "Copy", LucideIcons.Copy) { vm.copySelected() },
+        Tool("paste", "Paste", LucideIcons.SquarePlus, enabled = vm.canPaste) { vm.pasteCopied() },
+    )
     // the curve between keyframes needs two of them
     val graphs = Tool("graphs", "Graphs", LucideIcons.Spline, enabled = clip.keysUs.distinct().size >= 2) { vm.panel = Panel.Graphs }
     val layer = Tool("layer", "Layers", LucideIcons.Layers) { vm.panel = Panel.Layer }
@@ -380,6 +385,8 @@ private fun clipTools(vm: EditorViewModel, clip: ClipView, row: RowKind, pickers
             split,
             Tool("animation", "Animations", LucideIcons.SquarePlay) { vm.panel = Panel.Animation },
             duplicate,
+            copyPaste[0],
+            copyPaste[1],
             delete,
             Tool("mirror", "Mirror", LucideIcons.FlipVertical2) { vm.mirror(clip) },
             divider("d-stickermore"),
@@ -442,6 +449,8 @@ private fun clipTools(vm: EditorViewModel, clip: ClipView, row: RowKind, pickers
             if (video) add(Tool("beats", "Beats", LucideIcons.Flag, enabled = clip.audible) { vm.panel = Panel.Beats })
             add(Tool("crop", "Crop", LucideIcons.Crop) { vm.panel = Panel.Crop })
             add(duplicate)
+            add(copyPaste[0])
+            add(copyPaste[1])
             add(Tool("replace", "Replace", LucideIcons.Repeat) { pickers.single { vm.replace(clip, it) } })
             if (main) add(Tool("tooverlay", "Overlay", LucideIcons.Shuffle) { vm.switchToOverlay(clip) })
             else add(Tool("tomain", "Maintrack", LucideIcons.Shuffle) { vm.switchToMain(clip) })
@@ -502,6 +511,8 @@ private fun clipTools(vm: EditorViewModel, clip: ClipView, row: RowKind, pickers
             split,
             Tool("volume", "Volume", LucideIcons.Volume2) { vm.panel = Panel.Volume },
             duplicate,
+            copyPaste[0],
+            copyPaste[1],
             delete,
             // another sound in its place, keeping where it sits and how long it plays
             Tool("replace", "Replace", LucideIcons.Repeat) {
@@ -530,6 +541,8 @@ private fun clipTools(vm: EditorViewModel, clip: ClipView, row: RowKind, pickers
             Tool("animation", "Animations", LucideIcons.SquarePlay) { vm.panel = Panel.Animation },
             delete,
             duplicate,
+            copyPaste[0],
+            copyPaste[1],
             divider("d-texttools"),
             Tool("tts", "Text to speech", LucideIcons.AudioLines, enabled = clip.kind == "text") { vm.panel = Panel.Speech(clip.id) },
             // on screen from the first frame to the last

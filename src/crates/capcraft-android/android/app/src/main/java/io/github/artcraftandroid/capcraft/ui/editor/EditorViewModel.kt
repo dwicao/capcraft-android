@@ -407,7 +407,8 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
                 timeline = v
                 if (selected != null && clip(selected!!) == null) selected = null
                 scheduleSave()
-                if (name.isNotEmpty()) message = (if (back) "Undo: " else "Redo: ") + name
+                message = if (name.isNotEmpty()) (if (back) "Undo: " else "Redo: ") + name
+                else if (back) "Nothing to undo" else "Nothing to redo"
             }.onFailure { fail(it) }
         }
     }
@@ -631,9 +632,6 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
     /** The keyboard shortcuts cheat sheet is open over the editor. */
     var showShortcuts by mutableStateOf(false)
 
-    /** The copied clip (DeX: Ctrl+C / Ctrl+V), kept while the project is open. */
-    private var copiedJson: String? = null
-
     /** Multiplies the timeline zoom by [k], from the DeX shortcuts. */
     fun zoomTimeline(k: Float) {
         timelineZoom = (timelineZoom * k).coerceIn(0.1f, 20f)
@@ -703,23 +701,45 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         edit(select = { it.createdId.ifEmpty { null } }) { duplicate(id) }
     }
 
-    /** Copies the selected clip for pasting (the id resolves when [pasteCopied] runs). */
+    /** What it takes to re-make a copied clip without its id: text and shapes
+     *  carry their whole look, stickers their file; media clips re-resolve by id. */
+    private data class CopiedClip(
+        val kind: String,
+        val durationUs: Long,
+        val styleJson: String,
+        val mediaId: String,
+        val name: String,
+        /** Whether the copied clip lived on a text row (a sticker, not footage). */
+        val wasTextRow: Boolean,
+    )
+
+    private var copied: CopiedClip? = null
+
+    /** Whether the dock can offer Paste right now. */
+    val canPaste: Boolean get() = copied != null
+
+    /** Copies the selected clip for pasting: a snapshot, not an id, so later
+     *  edits (including agent edits) cannot invalidate it. */
     fun copySelected() {
         val id = selected ?: run {
             message = "Select a clip first"
             return
         }
-        if (clip(id) == null) {
+        val c = clip(id) ?: run {
             message = "That clip is gone"
             return
         }
-        copiedJson = id
+        val style = clipJson(id)?.optJSONObject("text")?.toString().orEmpty()
+        copied = CopiedClip(
+            c.kind, c.durationUs, style, c.mediaId, c.text.ifBlank { c.name },
+            wasTextRow = rowOf(id)?.kind == io.github.artcraftandroid.capcraft.core.RowKind.TEXT,
+        )
         message = "Copied"
     }
 
-    /** Pastes the copied clip at the playhead (right after the original on the main track). */
+    /** Pastes the copied clip at the playhead and selects the new clip. */
     fun pasteCopied() {
-        val id = copiedJson ?: run {
+        val pasted = copied ?: run {
             message = "Nothing to paste"
             return
         }
@@ -728,37 +748,62 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         viewModelScope.launch {
             val result = withContext(Threads.commands) {
                 runCatching {
-                    var v = s.duplicate(id)
-                    val pasted = v.createdId
-                    if (pasted.isNotEmpty()) {
-                        val now = v.rows.flatMap { it.clips }.firstOrNull { it.id == pasted }
-                        if (now != null) {
-                            val mainId = v.rows.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.trackId
-                            v = if (now.trackId == mainId) {
-                                // the main track stays in order: the copy goes where the playhead is
-                                val ordered = v.rows.first { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }.clips.sortedBy { it.startUs }
-                                val from = ordered.indexOfFirst { it.id == pasted }
-                                var target = ordered.count { it.startUs + it.durationUs / 2 < at }
-                                if (from >= 0 && target > from) target -= 1
-                                if (from >= 0 && target != from) s.reorderMain(pasted, target.toUInt()) else v
+                    when (pasted.kind) {
+                        // text/shapes carry everything they need: make them fresh
+                        "text", "shape" -> s.addText(at, pasted.durationUs, pasted.styleJson)
+                        else -> {
+                            // stickers re-place their picture; other media duplicates by id
+                            var v: TimelineView
+                            if (pasted.kind == "image" && pasted.wasTextRow) {
+                                val mediaId = pasted.mediaId.ifEmpty {
+                                    throw IllegalStateException("That sticker's picture is gone")
+                                }
+                                v = s.addSticker(mediaId, at, pasted.durationUs)
                             } else {
-                                s.moveClip(pasted, "", at)
+                                val sourceId = findMediaSourceId(pasted)
+                                    ?: throw IllegalStateException("That clip is gone")
+                                v = s.duplicate(sourceId)
                             }
+                            val id = v.createdId
+                            if (id.isNotEmpty()) {
+                                val now = v.rows.flatMap { it.clips }.firstOrNull { it.id == id }
+                                if (now != null) {
+                                    val mainId = v.rows.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.trackId
+                                    v = if (now.trackId == mainId) {
+                                        // the main track stays in order: the copy goes where the playhead is
+                                        val ordered = v.rows.first { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }.clips.sortedBy { it.startUs }
+                                        val from = ordered.indexOfFirst { it.id == id }
+                                        var target = ordered.count { it.startUs + it.durationUs / 2 < at }
+                                        if (from >= 0 && target > from) target -= 1
+                                        if (from >= 0 && target != from) s.reorderMain(id, target.toUInt()) else v
+                                    } else {
+                                        s.moveClip(id, "", at)
+                                    }
+                                }
+                            }
+                            v
                         }
                     }
-                    v
                 }
             }
             result.onSuccess { v ->
                 timeline = v
+                // the new clip, not the stale original: what "nothing happened" reports were about
                 selected = v.createdId.ifEmpty { selected }
                 scheduleSave()
                 message = "Pasted"
             }.onFailure {
-                copiedJson = null
                 fail(it)
             }
         }
+    }
+
+    /** A live clip id carrying the copied media (same media, same kind), or null if it's gone. */
+    private fun findMediaSourceId(pasted: CopiedClip): String? {
+        val rows = timeline?.rows.orEmpty()
+        return rows.flatMap { it.clips }.firstOrNull { c ->
+            c.kind == pasted.kind && c.mediaId.isNotEmpty() && c.mediaId == pasted.mediaId
+        }?.id
     }
 
     /** Moves the selected clip along the timeline by [deltaUs], as one undo step. */

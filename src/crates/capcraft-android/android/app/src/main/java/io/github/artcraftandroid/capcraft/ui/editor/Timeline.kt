@@ -94,21 +94,37 @@ fun orderedRows(rows: List<RowView>): List<RowView> =
     rows.filter { it.kind == RowKind.MAIN } + KIND_ORDER.flatMap { kind -> rows.filter { it.kind == kind } }
 
 /**
- * With nothing open, each kind on one row, as the reference's timeline rests: the clips of all its
- * lanes together, the back lane's first so the front's draw over them. The row has no lane of its
- * own (an empty id), so a clip dragged along it keeps its lane.
+ * With nothing open, each kind on rows of its own, as the reference's timeline rests: the clips of
+ * all its lanes together, the back lane's first so the front's draw over them. Clips that overlap
+ * in time get their own sub-row (greedy interval packing), so piled-up titles, overlays or effects
+ * fan out vertically instead of painting over each other — and the timeline scrolls to show them.
+ * A sub-row has no lane of its own (an empty id), so a clip dragged along it keeps its lane.
  */
 private fun mergedRows(rows: List<RowView>): List<RowView> =
-    rows.filter { it.kind == RowKind.MAIN } + KIND_ORDER.mapNotNull { kind ->
-        val lanes = rows.filter { it.kind == kind }
-        if (lanes.isEmpty()) null else RowView(
-            trackId = "",
-            kind = kind,
-            muted = lanes.all { it.muted },
-            visible = lanes.any { it.visible },
-            allVideos = false,
-            clips = lanes.flatMap { it.clips },
-        )
+    rows.filter { it.kind == RowKind.MAIN } + KIND_ORDER.flatMap { kind ->
+        val clips = rows.filter { it.kind == kind }.flatMap { it.clips }.sortedBy { it.startUs }
+        if (clips.isEmpty()) return@flatMap emptyList()
+        val lanes = mutableListOf<MutableList<ClipView>>()
+        for (clip in clips) {
+            val end = clip.startUs + clip.durationUs
+            val lane = lanes.firstOrNull { sub ->
+                sub.lastOrNull()?.let { it.startUs + it.durationUs <= clip.startUs } ?: true
+            } ?: mutableListOf<ClipView>().also { lanes.add(it) }
+            // zero-length markers ride the lane they sit on without blocking it
+            if (end > clip.startUs) lane.add(clip) else (lanes.firstOrNull() ?: lane).add(clip)
+        }
+        val muted = rows.filter { it.kind == kind }.all { it.muted }
+        val visible = rows.filter { it.kind == kind }.any { it.visible }
+        lanes.map {
+            RowView(
+                trackId = "",
+                kind = kind,
+                muted = muted,
+                visible = visible,
+                allVideos = false,
+                clips = it,
+            )
+        }
     }
 
 /** A folded row's line: the colour its clips are known by. */
@@ -1110,12 +1126,28 @@ private fun DrawScope.drawFrames(clip: ClipView, r: Rect, layout: Layout) {
     }
     val from = clip.sourceStartUs
     val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
+    val stripH = (tile * 0.8f).roundToInt().coerceAtLeast(16)
+    // The parent's strip already covers a split child's range: sub-crop it
+    // instantly instead of decoding the same footage again.
+    Thumbs.stripCovering(clip.path, from, to, count, stripH)?.let { cropped ->
+        drawTiled(cropped, count, r, layout, tile)
+        return
+    }
+    // Off-screen clips must not join the decode queue: after a big split
+    // that queue is what kept visible bodies grey for minutes.
+    if (r.right < 0f || r.left > layout.width) return
     // While the strip renders (one job per clip after a big split), paint one
     // frame across the body: a single decode, so bodies fill in seconds.
-    val strip = Thumbs.strip(clip.path, from, to, count, (tile * 0.8f).roundToInt().coerceAtLeast(16))
+    val strip = Thumbs.strip(clip.path, from, to, count, stripH)
         ?: return Thumbs.still(clip.path, from, (r.width.coerceAtLeast(tile) * 1.2f).roundToInt())?.let {
             drawCropped(it, r)
         } ?: Unit
+    drawTiled(strip, count, r, layout, tile)
+}
+
+/** Tiles [strip]'s [count] frames across [r], cropped to keep their shape. */
+private fun DrawScope.drawTiled(strip: android.graphics.Bitmap, count: Int, r: Rect, layout: Layout, tile: Float) {
+    val needed = ceil(r.width / tile).toInt().coerceAtLeast(1)
     val frameW = strip.width.toFloat() / count
     val img = strip.asImageBitmap()
     for (i in 0 until needed) {

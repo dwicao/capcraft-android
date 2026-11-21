@@ -37,6 +37,41 @@ object Thumbs {
     private fun waveGet(key: String): FloatArray? = synchronized(waveLock) { waves.get(key) }
     private fun wavePut(key: String, value: FloatArray) = synchronized(waveLock) { waves.put(key, value) }
 
+    /**
+     * A cached strip of [path] whose range covers [fromUs]..[toUs], cropped
+     * to it — so the children of a split reuse the parent's already decoded
+     * frames instead of decoding the same footage again. Count/height must
+     * match; tiles slice the range evenly, so a same-shaped strip
+     * sub-crops cleanly.
+     */
+    fun stripCovering(path: String, fromUs: Long, toUs: Long, count: Int, height: Int): Bitmap? =
+        synchronized(stripLock) {
+            val prefix = "s|$path|"
+            val suffix = "|$count|$height"
+            var src: Bitmap? = null
+            var srcFrom = 0L
+            var bestSpan = Long.MAX_VALUE
+            for ((key, bmp) in strips.snapshot()) {
+                if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue
+                val mid = key.removePrefix(prefix).removeSuffix(suffix).split('|')
+                if (mid.size != 2) continue
+                val f = mid[0].toLongOrNull() ?: continue
+                val t = mid[1].toLongOrNull() ?: continue
+                if (f > fromUs || t < toUs) continue
+                val span = t - f
+                if (span > 0 && span < bestSpan) {
+                    bestSpan = span
+                    src = bmp
+                    srcFrom = f
+                }
+            }
+            val bmp = src ?: return@synchronized null
+            val x0 = ((fromUs - srcFrom).toFloat() / bestSpan * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+            val x1 = ((toUs - srcFrom).toFloat() / bestSpan * bmp.width).toInt().coerceIn(x0 + 1, bmp.width)
+            if (x1 - x0 < 2) return@synchronized null
+            runCatching { Bitmap.createBitmap(bmp, x0, 0, x1 - x0, bmp.height) }.getOrNull()
+        }
+
     /** A strip of [count] frames of [path] between two source times, [height] pixels tall. */
     fun strip(path: String, fromUs: Long, toUs: Long, count: Int, height: Int): Bitmap? {
         val key = "s|$path|$fromUs|$toUs|$count|$height"

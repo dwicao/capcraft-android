@@ -91,6 +91,14 @@ fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
     androidx.compose.runtime.LaunchedEffect(Unit) {
         try { focus.requestFocus() } catch (_: Exception) { }
     }
+    // Panels steal focus (typing, sliders); when one closes, take it back so
+    // hardware keys keep working without tapping the timeline first. Guarded
+    // on panel null so typing inside an open panel never loses focus mid-key.
+    androidx.compose.runtime.LaunchedEffect(vm.panel) {
+        if (vm.panel == null) {
+            try { focus.requestFocus() } catch (_: Exception) { }
+        }
+    }
     return this.focusRequester(focus).focusable().onKeyEvent { handleDexKey(vm, it) }
 }
 
