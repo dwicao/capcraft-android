@@ -72,8 +72,8 @@ import kotlinx.coroutines.launch
 object Track {
     /** The band the time labels sit in, at the top. */
     const val RULER = 18f
-    /** From the labels down to the main track. */
-    const val RULER_GAP = 23f
+    /** From the labels down to the first row. */
+    const val RULER_GAP = 10f
     const val MAIN = 50f
     const val ROW = 30f
     /** The "add audio" and "add text" rows. */
@@ -98,26 +98,20 @@ object Track {
  *  - A gap row (no lane behind it) is drawn as an empty strip: dropping a clip above the topmost
  *    Elements row, below the lowest one, or between two lands there and mints a lane.
  */
-private data class DisplayRow(val lane: RowView?, val gapAbove: Boolean = false)
+private data class DisplayRow(val lane: RowView)
 
 /**
- * The display rows top-down: one per lane (main first inside its band), audio lanes at the
- * bottom, a gap row above the topmost Elements lane, between Elements lanes, and between the
- * lowest Elements lane and the main track. Stable: lanes keep engine order inside a band.
+ * The display rows top-down, one per lane and nothing between them: Elements rows at the top
+ * (front-most first, so a title can sit under an overlay), the main track under them, audio at
+ * the bottom. The rows sit flush — no gap rows — so the stack costs the least height; a drag
+ * near a row's top or bottom edge grows a new lane there instead.
  */
 private fun displayRows(lanes: List<RowView>): List<DisplayRow> {
-    val audio = lanes.filter { it.kind == RowKind.AUDIO }
+    val elements = lanes.filter { it.kind != RowKind.AUDIO && it.kind != RowKind.MAIN }.reversed()
     val main = lanes.filter { it.kind == RowKind.MAIN }
-    val elements = lanes.filter { it.kind != RowKind.AUDIO && it.kind != RowKind.MAIN }
-    val out = mutableListOf<DisplayRow>()
-    // elements: gap, lane, gap, lane, ... — every gap is a place a new row grows
-    out.add(DisplayRow(null, gapAbove = false))
-    elements.forEach { lane -> out.add(DisplayRow(lane)); out.add(DisplayRow(null, gapAbove = false)) }
-    main.forEach { lane -> out.add(DisplayRow(lane)) }
-    audio.forEach { lane -> out.add(DisplayRow(lane)) }
-    return out
+    val audio = lanes.filter { it.kind == RowKind.AUDIO }.reversed()
+    return (elements + main + audio).map(::DisplayRow)
 }
-
 
 /** Ruler steps, seconds: the first whose spacing is at least half a second's base width is used. */
 private val STEPS = doubleArrayOf(1.0 / 30, 0.05, 1.0 / 12, 1.0 / 6, 0.25, 0.5, 1.0, 1.5, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0, 90.0, 150.0, 300.0, 600.0, 900.0)
@@ -141,7 +135,8 @@ private class Layout(
     val rulerH = Track.RULER * dp
     val mainH = Track.MAIN * dp
     val rowH = Track.ROW * dp
-    val gapH = Track.GAP * dp
+    /** Rows sit flush; a hairline separates them, so the stack costs no extra height. */
+    val gapH = 0f
     val addH = Track.ADD_ROW * dp
     /** The display index of the main track's lane (-1 when it is missing). */
     val mainIndex: Int get() = rows.indexOfFirst { it.lane?.kind == RowKind.MAIN }
@@ -169,10 +164,10 @@ private class Layout(
 
     /** The pad under the audio bottom: the canvas bottom when the stack is short. */
     private fun bottomPad(): Float {
-        var want = 24 * dp
+        var want = 8 * dp
         rows.forEachIndexed { i, _ -> want += rowHeight(i) + if (i > 0) gapH else 0f }
         want += adds * (addH + gapH) + (Track.RULER + Track.RULER_GAP) * dp
-        return max(24 * dp, height - want)
+        return max(8 * dp, height - want)
     }
 
     fun x(t: Long): Float = width / 2f + (t - playhead) * pxPerUs
@@ -601,6 +596,12 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                     val top = layout.rowTop(index)
                     drawRect(Palette.HintRow, Offset(layout.x(0), top), Size(size.width - layout.x(0), layout.rowHeight(index)))
                 }
+                // flush rows: a hairline between them keeps each one readable
+                rows.forEachIndexed { index, row ->
+                    if (index == 0) return@forEachIndexed
+                    val top = layout.rowTop(index)
+                    drawRect(Color(0x33FFFFFF), Offset(0f, top - 0.5f * dp), Size(size.width, 1f * dp))
+                }
                 rows.forEachIndexed { index, row ->
                     val lane = row.lane ?: return@forEachIndexed
                     // the selected clip last, so its handles lie over its neighbours
@@ -624,17 +625,23 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                     val onMain = row.kind == RowKind.MAIN
                     val r = layout.clipRect(d.row, clip).translate(d.shownDx, if (onMain) 0f else d.dy)
                     if (!onMain) {
-                        // Canva-style target: highlight the row under the finger
-                        val target = targetRow(layout, rows, d.row, d.dy)
-                        val ty = layout.rowTop(target)
-                        val th = layout.rowHeight(target)
-                        drawRoundRect(
-                            Palette.Accent.copy(alpha = 0.22f),
-                            Offset(0f, ty), Size(size.width, th),
-                            CornerRadius(4 * dp),
-                        )
-                        drawRect(Palette.Accent, Offset(0f, ty), Size(size.width, 2 * dp))
-                        drawRect(Palette.Accent, Offset(0f, ty + th - 2 * dp), Size(size.width, 2 * dp))
+                        // Canva-style target: the row fills when the drop joins it, and a
+                        // bright insert line shows where a new row would grow
+                        val target = targetDrop(layout, rows, d.row, d.dy)
+                        val ty = layout.rowTop(target.row)
+                        val th = layout.rowHeight(target.row)
+                        if (target.where == 0) {
+                            drawRoundRect(
+                                Palette.Accent.copy(alpha = 0.22f),
+                                Offset(0f, ty), Size(size.width, th),
+                                CornerRadius(4 * dp),
+                            )
+                            drawRect(Palette.Accent, Offset(0f, ty), Size(size.width, 2 * dp))
+                            drawRect(Palette.Accent, Offset(0f, ty + th - 2 * dp), Size(size.width, 2 * dp))
+                        } else {
+                            val lineY = if (target.where < 0) ty else ty + th
+                            drawRect(Palette.Accent, Offset(0f, lineY - 2 * dp), Size(size.width, 4 * dp))
+                        }
                     }
                     drawRoundRect(Color(0x55000000), r.topLeft + Offset(0f, 4 * dp), r.size, CornerRadius(4 * dp))
                     drawClip(vm, row.kind, clip, r, layout, measurer, textIcon, effectIcon, filterIcon, musicIcon)
@@ -788,65 +795,64 @@ private fun dropClip(vm: EditorViewModel, layout: Layout, rows: List<DisplayRow>
         return
     }
     val start = (clip.startUs + (d.shownDx / pxPerUs).toLong()).coerceAtLeast(0)
-    val target = targetRow(layout, rows, d.row, d.dy)
-    if (target == d.row && start == clip.startUs) return
-    val targetRow = rows.getOrNull(target)
-    val targetLane = targetRow?.lane
-    if (targetLane == null) {
-        // a gap row: grow a fresh lane beside the nearest lane row on the
-        // finger's side (above the gap) or the clip's own lane at the ends.
-        // the anchor must share the clip's tier; audio never grows elements.
-        val anchor = nearestLaneRow(rows, target, above = target < d.row)?.lane
-        if (anchor != null && anchor.kind != RowKind.MAIN && sameTierUi(anchor.kind, lane.kind)) {
-            vm.edit(select = { clip.id }) { stackToLane(clip.id, "", anchor.trackId, target < d.row) }
-        } else if (start != clip.startUs) {
-            vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+    val drop = targetDrop(layout, rows, d.row, d.dy)
+    val targetLane = rows.getOrNull(drop.row)?.lane
+    if (targetLane == null || targetLane.kind == RowKind.MAIN || !sameTierUi(targetLane.kind, lane.kind)) {
+        // main is background and tiers never mix: a refused row keeps the time slide
+        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        return
+    }
+    if (drop.row == d.row && drop.where == 0) {
+        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        return
+    }
+    if (drop.where == 0) {
+        // onto the row's lane: join it, the engine sliding in time only if taken
+        if (targetLane.trackId != lane.trackId) {
+            vm.edit(select = { clip.id }) { stackToLane(clip.id, targetLane.trackId, "", false) }
         }
-        return
-    }
-    if (targetLane.kind == RowKind.MAIN) {
-        // main is background: a drop there only slides in time
         if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
         return
     }
-    if (!sameTierUi(targetLane.kind, lane.kind)) {
-        // across tiers (elements<->audio): refuse the row, keep the time slide
-        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
-        return
+    // the edge zone: grow a fresh lane over that row (above) or under it (below)
+    vm.edit(select = { clip.id }) {
+        stackToLane(clip.id, "", targetLane.trackId, above = drop.where < 0)
     }
-    if (targetLane.trackId == lane.trackId) {
-        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
-        return
-    }
-    // the engine moves the clip onto that lane by its stable id, sliding in
-    // time only when the span is taken there
-    vm.edit(select = { clip.id }) { stackToLane(clip.id, targetLane.trackId, "", false) }
-    if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
 }
 
 /** Whether two row kinds stack in one tier in this UI: elements mix, audio stays apart. */
 private fun sameTierUi(a: RowKind, b: RowKind): Boolean =
     (a == RowKind.AUDIO) == (b == RowKind.AUDIO) && a != RowKind.MAIN && b != RowKind.MAIN
 
-/** The nearest display row that carries a lane, searching up (`above`) or down from [at]. */
-private fun nearestLaneRow(rows: List<DisplayRow>, at: Int, above: Boolean): DisplayRow? {
-    if (above) for (i in at downTo 0) { rows.getOrNull(i)?.lane?.let { return rows[i] } }
-    else for (i in at until rows.size) { rows.getOrNull(i)?.lane?.let { return rows[i] } }
-    return rows.firstOrNull { it.lane != null }
-}
+/** Where a dragged clip would land: row [row], and [where] -1 over it, 0 onto it, +1 under it. */
+private data class Drop(val row: Int, val where: Int)
 
-/** The display row the dragged clip would land on: the row whose drawn band holds the finger's Y. */
-private fun targetRow(layout: Layout, rows: List<DisplayRow>, from: Int, dy: Float): Int {
+/**
+ * The drop under the finger: the row whose band holds it, split into thirds — the top third
+ * grows a row over that row, the bottom third one under it, the middle joins the row's lane.
+ * Past either end the nearest row takes it, in its outer third.
+ */
+private fun targetDrop(layout: Layout, rows: List<DisplayRow>, from: Int, dy: Float): Drop {
     val lane = rows.getOrNull(from)?.lane
     val clip = lane?.clips?.firstOrNull()
-    // a gap row has no clip: measure from its own band middle instead
-    val y = if (clip != null) layout.clipRect(from, clip).center.y + dy
-    else layout.rowTop(from) + layout.rowHeight(from) / 2 + dy
+    val y = (if (clip != null) layout.clipRect(from, clip).center.y
+    else layout.rowTop(from) + layout.rowHeight(from) / 2) + dy
     rows.forEachIndexed { i, _ ->
         val r = layoutRowBand(layout, i)
-        if (y >= r.top && y <= r.bottom) return i
+        if (y >= r.top && y <= r.bottom) {
+            // inside the clip's own row a small vertical wobble is not a stack
+            // change: only the middle means it, so nudging never spawns a row
+            if (i == from) return Drop(i, 0)
+            val third = r.height / 3f
+            val where = when {
+                y < r.top + third -> -1
+                y > r.bottom - third -> 1
+                else -> 0
+            }
+            return Drop(i, where)
+        }
     }
-    // past either end: the nearest end row
+    // past either end: the nearest row, in the outer third on that side
     var best = from
     var gap = Float.MAX_VALUE
     rows.forEachIndexed { i, _ ->
@@ -854,7 +860,7 @@ private fun targetRow(layout: Layout, rows: List<DisplayRow>, from: Int, dy: Flo
         val d = if (y < r.top) r.top - y else y - r.bottom
         if (d < gap) { gap = d; best = i }
     }
-    return best
+    return Drop(best, if (y < layout.rowTop(best)) -1 else 1)
 }
 
 /** The drawn band of display row [index]: its clips' band. */
