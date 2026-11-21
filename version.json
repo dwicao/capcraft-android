@@ -1,13 +1,13 @@
 {
-  "version": "0.0.8-beta",
-  "versionCode": 801,
-  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.8-beta-flush/capcraft-android-0.0.8-beta-aosp.apk",
-  "sizeBytes": 114745031,
-  "sha256": "b3944966a65f149015f9e2fb78a2df236638eb868723048978ef6fd5c8d9d85f",
+  "version": "0.0.9-beta",
+  "versionCode": 901,
+  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.9-beta-updates/capcraft-android-0.0.9-beta-aosp.apk",
+  "sizeBytes": 114761415,
+  "sha256": "f446bf603a89cce215d6442338059f0c5f6287ff969939137ed5fa2349ee6824",
   "releasedAt": "2026-11-22",
   "notes": [
-    "Timeline rapat: gap antar row dihapus, row berdempetan dengan garis rambut 1px.",
-    "Padding atas/bawah dipangkas (10dp / 8dp).",
-    "Nambah row via zona tepi: drag ke sepertiga atas/bawah sebuah row."
+    "Thumbnail timeline langsung muncul saat project dibuka (preload strip penuh + cache disk).",
+    "Settings → Check for updates: cek versi, changelog, progress bar unduhan, tombol Cancel, lalu Install.",
+    "Timeline lebih rapat: row berdempetan tanpa gap."
   ]
 }
