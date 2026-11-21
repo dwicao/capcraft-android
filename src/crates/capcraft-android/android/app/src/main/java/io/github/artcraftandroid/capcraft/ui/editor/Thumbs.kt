@@ -38,25 +38,26 @@ object Thumbs {
     private fun wavePut(key: String, value: FloatArray) = synchronized(waveLock) { waves.put(key, value) }
 
     /**
-     * A cached strip of [path] whose range covers [fromUs]..[toUs], cropped
-     * to it — so the children of a split reuse the parent's already decoded
-     * frames instead of decoding the same footage again. Count/height must
-     * match; tiles slice the range evenly, so a same-shaped strip
-     * sub-crops cleanly.
+     * A cached strip of [path] whose time range covers [fromUs]..[toUs],
+     * cropped to it — so the children of a split reuse the parent's already
+     * decoded frames instead of decoding the same footage again. Only the
+     * height must match: tiles slice their own range evenly, so any covering
+     * strip sub-crops cleanly by time fraction.
      */
-    fun stripCovering(path: String, fromUs: Long, toUs: Long, count: Int, height: Int): Bitmap? =
+    fun stripCovering(path: String, fromUs: Long, toUs: Long, height: Int): Bitmap? =
         synchronized(stripLock) {
             val prefix = "s|$path|"
-            val suffix = "|$count|$height"
             var src: Bitmap? = null
             var srcFrom = 0L
             var bestSpan = Long.MAX_VALUE
             for ((key, bmp) in strips.snapshot()) {
-                if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue
-                val mid = key.removePrefix(prefix).removeSuffix(suffix).split('|')
-                if (mid.size != 2) continue
-                val f = mid[0].toLongOrNull() ?: continue
-                val t = mid[1].toLongOrNull() ?: continue
+                if (!key.startsWith(prefix)) continue
+                val rest = key.removePrefix(prefix).split('|')
+                if (rest.size != 4) continue
+                val h = rest[3].toIntOrNull() ?: continue
+                if (h != height) continue
+                val f = rest[0].toLongOrNull() ?: continue
+                val t = rest[1].toLongOrNull() ?: continue
                 if (f > fromUs || t < toUs) continue
                 val span = t - f
                 if (span > 0 && span < bestSpan) {
@@ -71,6 +72,40 @@ object Thumbs {
             if (x1 - x0 < 2) return@synchronized null
             runCatching { Bitmap.createBitmap(bmp, x0, 0, x1 - x0, bmp.height) }.getOrNull()
         }
+
+    /**
+     * Warms the cache for a freshly opened timeline: one full-span strip per
+     * media file first (so every clip paints instantly via [stripCovering]),
+     * then each clip's own strip for full tile detail. Keys match what
+     * drawing requests, so nothing decodes twice. Runs on the thumbnail
+     * threads; drawing picks results up as they land.
+     */
+    fun preload(rows: List<io.github.artcraftandroid.capcraft.core.RowView>, tileH: Int, pxPerUs: Float) {
+        val videos = rows.flatMap { it.clips }.filter { it.kind == "video" }
+        if (videos.isEmpty()) return
+        val height = (tileH * 0.8f).roundToInt().coerceAtLeast(16)
+        // full-span strips first: one decode per file covers every clip in it
+        videos.groupBy { it.path }.forEach { (path, clips) ->
+            val from = clips.minOf { it.sourceStartUs }
+            val to = clips.maxOf { it.sourceStartUs + (it.durationUs * it.speed).toLong() }
+            strip(path, from, to, 60, height)
+        }
+        // then each clip's own strip, for per-tile detail
+        videos.forEach { clip ->
+            val from = clip.sourceStartUs
+            val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
+            val widthPx = ((to - from) * pxPerUs / 1_000_000f).coerceAtLeast(tileH.toFloat())
+            val needed = kotlin.math.ceil(widthPx / tileH).toInt().coerceAtLeast(1)
+            val count = when {
+                needed <= 4 -> needed
+                needed <= 8 -> 8
+                needed <= 16 -> 16
+                needed <= 32 -> 32
+                else -> 60
+            }
+            strip(clip.path, from, to, count, height)
+        }
+    }
 
     /** A strip of [count] frames of [path] between two source times, [height] pixels tall. */
     fun strip(path: String, fromUs: Long, toUs: Long, count: Int, height: Int): Bitmap? {

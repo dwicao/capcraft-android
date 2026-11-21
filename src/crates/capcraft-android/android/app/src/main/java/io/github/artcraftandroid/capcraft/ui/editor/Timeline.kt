@@ -366,6 +366,18 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     }
     // a gesture reads the rows as they are now: a press that selects a clip opens its kind mid-gesture
     val currentRows = rememberUpdatedState(rows)
+    // warm the thumbnail cache the moment a timeline loads: one full-span
+    // strip per file first (every clip paints instantly via sub-crop), then
+    // each clip's own strip for tile detail — no waiting for a scroll.
+    // preload only enqueues requests, so it runs inline.
+    androidx.compose.runtime.LaunchedEffect(timeline) {
+        val t = timeline
+        if (t != null) {
+            val tileH = (Track.ROW * density).roundToInt().coerceAtLeast(16)
+            val pxPerUs = Track.DP_PER_SECOND * density * zoom / 1_000_000f
+            Thumbs.preload(t.rows, tileH, pxPerUs)
+        }
+    }
 
     Box(modifier) {
         TimelineClipMenu(vm)
@@ -382,7 +394,8 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         val vScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
                         val hScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)
                         val delta = vScrollAxis + hScrollAxis
-                        if (delta != 0f && event.isCtrlPressed) {
+                        val ctrl = event.metaState and android.view.KeyEvent.META_CTRL_ON != 0
+                        if (delta != 0f && ctrl) {
                             vm.zoomTimeline(if (delta > 0f) 1f / 1.15f else 1.15f)
                             true
                         } else if (delta != 0f) {
@@ -1167,10 +1180,10 @@ private fun DrawScope.drawFrames(clip: ClipView, r: Rect, layout: Layout) {
     val from = clip.sourceStartUs
     val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
     val stripH = (tile * 0.8f).roundToInt().coerceAtLeast(16)
-    // The parent's strip already covers a split child's range: sub-crop it
-    // instantly instead of decoding the same footage again.
-    Thumbs.stripCovering(clip.path, from, to, count, stripH)?.let { cropped ->
-        drawTiled(cropped, count, r, layout, tile)
+    // A covering strip (a parent's span, or the preload's full-file span)
+    // paints at once, stretched over the body: no decode, no queue wait.
+    Thumbs.stripCovering(clip.path, from, to, stripH)?.let { covering ->
+        drawCropped(covering, r)
         return
     }
     // Off-screen clips must not join the decode queue: after a big split
