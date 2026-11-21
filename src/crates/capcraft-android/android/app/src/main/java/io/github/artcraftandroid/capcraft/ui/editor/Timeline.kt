@@ -675,7 +675,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         RowKind.FILTER -> hintFilter
                         else -> null
                     }
-                    if (layout.rows.indexOfFirst { it.lane?.kind == kind } != i) return@forEachIndexed
+                    if (icon == null || layout.rows.indexOfFirst { it.lane?.kind == kind } != i) return@forEachIndexed
                     val top = layout.rowTop(i)
                     val tile = layout.hintTile(Rect(0f, top, 0f, top + layout.rowHeight(i)))
                     if (tile.right > 0) {
