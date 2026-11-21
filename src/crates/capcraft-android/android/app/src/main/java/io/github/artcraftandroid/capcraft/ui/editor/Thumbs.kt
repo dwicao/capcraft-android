@@ -45,13 +45,27 @@ object Thumbs {
     private val waves = LruCache<String, FloatArray>(256)
     private val pending = ConcurrentHashMap.newKeySet<String>()
 
-    /** A strip of a file, and the part of it a clip shows: drawn straight from the bitmap. */
-    class Cover(val bmp: Bitmap, val x: Int, val width: Int)
+    /**
+     * A strip of a file that covers [fromUs]..[toUs] — the span of the clip asking — and the
+     * pixels in it that cover that span ([x] and [width]); [stripFromUs]..[stripToUs] say what
+     * the whole strip covers, so a tile can find its own slice instead of stretching one frame.
+     */
+    class Cover(
+        val bmp: Bitmap,
+        val x: Int,
+        val width: Int,
+        val fromUs: Long,
+        val toUs: Long,
+        val stripFromUs: Long,
+        val stripToUs: Long,
+        /** The frames the whole strip holds, so a tile can pick the one nearest its time. */
+        val frames: Int,
+    )
 
     /** The strips that cover a whole file, keyed `path|height`, smallest span first. */
     private val covering = HashMap<String, MutableList<Entry>>()
 
-    private class Entry(val key: String, val fromUs: Long, val toUs: Long, val bmp: Bitmap)
+    private class Entry(val key: String, val fromUs: Long, val toUs: Long, val bmp: Bitmap, val frames: Int)
 
     private fun stripGet(key: String): Bitmap? = synchronized(lock) { strips.get(key) }
 
@@ -66,10 +80,11 @@ object Thumbs {
                     val path = parts[1]
                     val from = parts[2].toLongOrNull() ?: 0L
                     val to = parts[3].toLongOrNull() ?: 0L
+                    val frames = parts[4].toIntOrNull() ?: 1
                     val height = parts[5].toIntOrNull() ?: 0
                     val list = covering.getOrPut("$path|$height") { mutableListOf() }
                     list.removeAll { it.key == key }
-                    list.add(Entry(key, from, to, value))
+                    list.add(Entry(key, from, to, value, frames.coerceAtLeast(1)))
                     list.sortBy { it.toUs - it.fromUs }
                 }
             }
@@ -142,29 +157,35 @@ object Thumbs {
             val x0 = ((fromUs - entry.fromUs).toFloat() / span * bmp.width).toInt().coerceIn(0, bmp.width - 1)
             val x1 = ((toUs - entry.fromUs).toFloat() / span * bmp.width).toInt().coerceIn(x0 + 1, bmp.width)
             if (x1 - x0 < 2) continue
-            return@synchronized Cover(bmp, x0, x1 - x0)
+            return@synchronized Cover(bmp, x0, x1 - x0, fromUs, toUs, entry.fromUs, entry.toUs, entry.frames)
         }
         null
     }
 
     /**
-     * Warms the cache for a freshly opened timeline, in the background: one strip per media file
-     * covering everything the timeline shows of it, at each row height it is drawn at. Every clip
-     * then paints at once from that strip; tile-level detail arrives per clip only as it is drawn.
-     * Disk first, so a project opened before paints without decoding anything.
+     * Warms the cache for a freshly opened timeline, in the background, in two passes:
+     *
+     * 1. one strip per file covering everything the timeline shows of it, at each row height —
+     *    the instant placeholder every clip paints from (disk first, so a project opened before
+     *    paints without decoding anything);
+     * 2. each clip's own sharp strip, nearest the playhead first, computed exactly as the drawer
+     *    asks for it — so tiles come out one frame each and nothing is decoded twice.
      */
     fun preload(
         rows: List<io.github.artcraftandroid.capcraft.core.RowView>,
-        heights: List<Int>,
+        rowTileH: Int,
+        mainTileH: Int,
         pxPerUs: Float,
+        playheadUs: Long,
     ) {
-        val videos = rows.flatMap { it.clips }.filter { it.kind == "video" }
+        val videos = rows.flatMap { row -> row.clips.map { it to row.kind } }.filter { it.first.kind == "video" }
         if (videos.isEmpty()) return
-        videos.groupBy { it.path }.forEach { (path, clips) ->
+        // pass 1: the covering placeholder, per file and per height
+        videos.map { it.first }.groupBy { it.path }.forEach { (path, clips) ->
             val from = clips.minOf { it.sourceStartUs }
             val to = clips.maxOf { it.sourceStartUs + (it.durationUs * it.speed).toLong() }
-            heights.distinct().forEach { height ->
-                val h = height.coerceAtLeast(16)
+            listOf(rowTileH, mainTileH).distinct().forEach { tileH ->
+                val h = (tileH * 0.8f).roundToInt().coerceAtLeast(16)
                 if (cover(path, from, to, h) != null) return@forEach
                 val key = "s|$path|$from|$to|60|$h"
                 if (!pending.add(key)) return@forEach
@@ -184,6 +205,23 @@ object Thumbs {
                     version.intValue++
                 }
             }
+        }
+        // pass 2: each clip's own strip, the one under the playhead first
+        videos.sortedBy { kotlin.math.abs(it.first.startUs - playheadUs) }.forEach { (clip, kind) ->
+            val tileH = (if (kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN) mainTileH else rowTileH).coerceAtLeast(16)
+            val stripH = (tileH * 0.8f).roundToInt().coerceAtLeast(16)
+            val from = clip.sourceStartUs
+            val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
+            val widthPx = ((to - from) * pxPerUs / 1_000_000f).coerceAtLeast(tileH.toFloat())
+            val needed = kotlin.math.ceil(widthPx / tileH).toInt().coerceAtLeast(1)
+            val count = when {
+                needed <= 4 -> needed
+                needed <= 8 -> 8
+                needed <= 16 -> 16
+                needed <= 32 -> 32
+                else -> 60
+            }
+            strip(clip.path, from, to, count, stripH)
         }
     }
 

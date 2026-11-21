@@ -321,10 +321,11 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     androidx.compose.runtime.LaunchedEffect(timeline) {
         val t = timeline
         if (t != null) {
-            val rowTall = (Track.ROW * dp * 0.8f).roundToInt().coerceAtLeast(16)
-            val mainTall = (Track.MAIN * dp * 0.8f).roundToInt().coerceAtLeast(16)
+            // tile heights are the rows' own heights: a strip is 80% of one
+            val rowTile = (Track.ROW * dp).roundToInt().coerceAtLeast(20)
+            val mainTile = (Track.MAIN * dp).roundToInt().coerceAtLeast(20)
             val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-            Thumbs.preload(t.rows, listOf(rowTall, mainTall), pxPerUs)
+            Thumbs.preload(t.rows, rowTile, mainTile, pxPerUs, vm.playhead)
         }
     }
 
@@ -1012,14 +1013,41 @@ private fun DrawScope.drawFitted(b: Bitmap, r: Rect) {
     )
 }
 
-private fun DrawScope.drawCrop(cover: Thumbs.Cover, r: Rect) {
-    drawImage(
-        cover.bmp.asImageBitmap(),
-        srcOffset = IntOffset(cover.x, 0),
-        srcSize = IntSize(cover.width.coerceAtLeast(1), cover.bmp.height),
-        dstOffset = IntOffset(r.left.roundToInt(), r.top.roundToInt()),
-        dstSize = IntSize(r.width.roundToInt().coerceAtLeast(1), r.height.roundToInt().coerceAtLeast(1)),
-    )
+/**
+ * Tiles a covering strip across [r] as a filmstrip: each tile takes its own slice of the clip's
+ * span from the strip's pixels, so a thin strip reads as frames — never as one frame stretched
+ * over the whole clip.
+ */
+private fun DrawScope.drawCoverTiled(
+    cover: Thumbs.Cover,
+    fromUs: Long,
+    toUs: Long,
+    r: Rect,
+    layout: Layout,
+    tile: Float,
+) {
+    val needed = ceil(r.width / tile).toInt().coerceAtLeast(1)
+    val span = (toUs - fromUs).coerceAtLeast(1L)
+    val stripSpan = (cover.stripToUs - cover.stripFromUs).coerceAtLeast(1L)
+    val frames = cover.frames.coerceAtLeast(1)
+    val frameW = cover.bmp.width.toFloat() / frames
+    // one whole frame per tile, never a slice stretched sideways
+    val srcW = min(frameW, cover.bmp.height.toFloat())
+    val img = cover.bmp.asImageBitmap()
+    for (i in 0 until needed) {
+        val x = r.left + i * tile
+        if (x + tile < 0 || x > layout.width) continue
+        val mid = fromUs + span * (2L * i + 1) / (2L * needed)
+        val index = (((mid - cover.stripFromUs).toDouble() / stripSpan) * frames).toInt().coerceIn(0, frames - 1)
+        val srcX = (index * frameW + (frameW - srcW) / 2f).coerceIn(0f, (cover.bmp.width - srcW).coerceAtLeast(0f))
+        drawImage(
+            img,
+            srcOffset = IntOffset(srcX.roundToInt(), 0),
+            srcSize = IntSize(srcW.roundToInt().coerceIn(1, cover.bmp.width), cover.bmp.height),
+            dstOffset = IntOffset(x.roundToInt(), r.top.roundToInt()),
+            dstSize = IntSize(tile.roundToInt().coerceAtLeast(1), r.height.roundToInt().coerceAtLeast(1)),
+        )
+    }
 }
 
 private fun DrawScope.drawCropped(b: Bitmap, r: Rect) {
@@ -1220,22 +1248,26 @@ private fun DrawScope.drawFrames(clip: ClipView, r: Rect, layout: Layout) {
     val from = clip.sourceStartUs
     val to = clip.sourceStartUs + (clip.durationUs * clip.speed).toLong()
     val stripH = (tile * 0.8f).roundToInt().coerceAtLeast(16)
-    // A covering strip (a parent's span, or the preload's whole-file span) paints at once,
-    // drawn from its own pixels: no decode, no queue, and no crop bitmap per frame.
-    Thumbs.cover(clip.path, from, to, stripH)?.let { covering ->
-        drawCrop(covering, r)
+    // This clip's own strip first: it is the sharp one, one frame per tile.
+    Thumbs.strip(clip.path, from, to, count, stripH)?.let { strip ->
+        drawTiled(strip, count, r, layout, tile)
         return
     }
-    // Off-screen clips must not join the decode queue: after a big split
-    // that queue is what kept visible bodies grey for minutes.
+    // Off-screen clips must not join the decode queue: after a big split that
+    // queue is what kept visible bodies grey for minutes.
     if (r.right < 0f || r.left > layout.width) return
-    // While the strip renders (one job per clip after a big split), paint one
-    // frame across the body: a single decode, so bodies fill in seconds.
-    val strip = Thumbs.strip(clip.path, from, to, count, stripH)
-        ?: return Thumbs.still(clip.path, from, (r.width.coerceAtLeast(tile) * 1.2f).roundToInt())?.let {
-            drawCropped(it, r)
-        } ?: Unit
-    drawTiled(strip, count, r, layout, tile)
+    // Until that strip lands, a strip covering a wider span (the whole file, or a
+    // parent after a split) tiles the same way — a low-resolution filmstrip, never
+    // one frame stretched across the body. Asking for the sharp strip above has
+    // already queued it, so the clip upgrades on its own next frame.
+    Thumbs.cover(clip.path, from, to, stripH)?.let { covering ->
+        drawCoverTiled(covering, from, to, r, layout, tile)
+        return
+    }
+    // Nothing covering it yet: one frame stands in, so the body is never blank.
+    Thumbs.still(clip.path, from, (r.width.coerceAtLeast(tile) * 1.2f).roundToInt())?.let {
+        drawCropped(it, r)
+    } ?: Unit
 }
 
 /** Tiles [strip]'s [count] frames across [r], cropped to keep their shape. */
