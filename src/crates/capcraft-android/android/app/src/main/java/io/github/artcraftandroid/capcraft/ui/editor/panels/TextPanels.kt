@@ -259,11 +259,11 @@ fun TextPanel(vm: EditorViewModel, clipId: String?, startTab: Int = 3) {
     // the words open in a full-screen editor from the field's expand button
     var expanded by remember { mutableStateOf(false) }
     if (expanded) {
-        FullTextEditor(text, onBack = { expanded = false }, onTyping = { typing -> vm.textEditing = typing }) { words ->
+        FullTextEditor(text, onBack = { expanded = false }, onTyping = { typing -> vm.textEditing = typing }, onDone = { words ->
             expanded = false
             text = words
             change(null) { put("content", words) }
-        }
+        })
     }
 
     // a font file from the phone, added to the project and set on the title

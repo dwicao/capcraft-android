@@ -86,10 +86,10 @@ fun EnterCaptionsPage(vm: EditorViewModel) {
     var afterDownload by remember { mutableStateOf(false) }
     // the script is written full screen, as the reference's card opens it
     var writing by remember { mutableStateOf(false) }
-    if (writing) FullTextEditor(words, onBack = { writing = false }, onTyping = { typing -> vm.textEditing = typing }) { typed ->
+    if (writing) FullTextEditor(words, onBack = { writing = false }, onTyping = { typing -> vm.textEditing = typing }, onDone = { typed ->
         words = typed.take(4000)
         writing = false
-    }
+    })
 
     LaunchedEffect(refresh) {
         withContext(Threads.thumbnails) {
