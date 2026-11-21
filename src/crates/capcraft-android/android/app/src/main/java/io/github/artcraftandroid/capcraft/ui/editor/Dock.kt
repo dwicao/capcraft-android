@@ -37,12 +37,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -217,19 +219,19 @@ fun Dock(vm: EditorViewModel) {
                             .horizontalScroll(barScroll)
                             .pointerInput(barScroll) {
                                 // DeX/desktop mouse: vertical wheel (bare or with Shift) scrolls the bar
-                                // horizontally, so tools past the edge are reachable without touch-drag
-                                awaitPointerEventScope {
-                                    while (true) {
-                                        val e = awaitPointerEvent()
-                                        if (e.type != androidx.compose.ui.input.pointer.PointerEventType.Scroll) continue
-                                        val d = e.scrollDelta
-                                        val dx = (if (d.y != 0f) d.y else d.x).toInt()
-                                        if (dx != 0) {
-                                            wheelScope.launch {
-                                                barScroll.scrollTo(barScroll.value + (dx * 3))
-                                            }
-                                            e.changes.forEach { it.consume() }
+                                // horizontally, so tools past the edge are reachable without touch-drag.
+                                // awaitPointerEvent() loops directly: inside pointerInput we already
+                                // are in the await scope, no wrapper call needed.
+                                while (true) {
+                                    val e = awaitPointerEvent()
+                                    if (e.type != PointerEventType.Scroll) continue
+                                    val d = e.scrollDelta
+                                    val dx = (if (d.y != 0f) d.y else d.x).toInt()
+                                    if (dx != 0) {
+                                        wheelScope.launch {
+                                            barScroll.scrollTo(barScroll.value + (dx * 3))
                                         }
+                                        e.changes.forEach { it.consume() }
                                     }
                                 }
                             },

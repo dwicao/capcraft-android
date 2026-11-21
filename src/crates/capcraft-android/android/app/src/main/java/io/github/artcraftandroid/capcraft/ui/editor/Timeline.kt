@@ -10,7 +10,7 @@ import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -377,24 +377,22 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                 // wheels scrub the timeline; Ctrl+wheel zooms. A separate input
                 // so touch gestures below never see wheel events.
                 .pointerInput(vm) {
-                    awaitPointerEventScope {
-                        while (true) {
-                            val e = awaitPointerEvent()
-                            if (e.type != PointerEventType.Scroll) continue
-                            val d = e.scrollDelta
-                            val ctrl = e.keyboardModifiers.isCtrlPressed
-                            if (ctrl) {
-                                val factor = if ((d.y + d.x) > 0f) 1f / 1.15f else 1.15f
-                                vm.zoomTimeline(factor)
-                                e.changes.forEach { it.consume() }
-                                continue
-                            }
-                            val dx = d.y + d.x
-                            if (dx == 0f) continue
-                            val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-                            vm.scrub(vm.playhead + (dx * 24f / pxPerUs).toLong())
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        if (e.type != PointerEventType.Scroll) continue
+                        val d = e.scrollDelta
+                        val ctrl = e.keyboardModifiers.isCtrlPressed
+                        if (ctrl) {
+                            val factor = if ((d.y + d.x) > 0f) 1f / 1.15f else 1.15f
+                            vm.zoomTimeline(factor)
                             e.changes.forEach { it.consume() }
+                            continue
                         }
+                        val dx = d.y + d.x
+                        if (dx == 0f) continue
+                        val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
+                        vm.scrub(vm.playhead + (dx * 24f / pxPerUs).toLong())
+                        e.changes.forEach { it.consume() }
                     }
                 }
                 .pointerInput(vm) {
