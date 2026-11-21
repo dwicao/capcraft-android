@@ -6,8 +6,8 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.awaitPointerEventScope
-import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -29,8 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -212,11 +210,12 @@ fun Dock(vm: EditorViewModel) {
                     }
                 } else {
                     // a tool put before the first (a collage's Layout) shows from the start, not scrolled past
-                    val row = remember(key, tools.firstOrNull()?.id) { androidx.compose.foundation.lazy.LazyListState() }
+                    val barScroll = remember(key, tools.firstOrNull()?.id) { androidx.compose.foundation.ScrollState(0) }
                     val wheelScope = rememberCoroutineScope()
-                    LazyRow(
+                    Row(
                         Modifier.fillMaxHeight()
-                            .pointerInput(row) {
+                            .horizontalScroll(barScroll)
+                            .pointerInput(barScroll) {
                                 // DeX/desktop mouse: vertical wheel (bare or with Shift) scrolls the bar
                                 // horizontally, so tools past the edge are reachable without touch-drag
                                 awaitPointerEventScope {
@@ -224,20 +223,19 @@ fun Dock(vm: EditorViewModel) {
                                         val e = awaitPointerEvent()
                                         if (e.type != androidx.compose.ui.input.pointer.PointerEventType.Scroll) continue
                                         val d = e.scrollDelta
-                                        val dx = (if (d.y != 0f) d.y else d.x)
-                                        if (dx != 0f) {
+                                        val dx = (if (d.y != 0f) d.y else d.x).toInt()
+                                        if (dx != 0) {
                                             wheelScope.launch {
-                                                row.scrollBy(dx * 1.5f)
+                                                barScroll.scrollTo(barScroll.value + (dx * 3))
                                             }
                                             e.changes.forEach { it.consume() }
                                         }
                                     }
                                 }
                             },
-                        state = row,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        items(tools, key = { it.id }) { tool -> ToolItem(tool) }
+                        tools.forEach { tool -> ToolItem(tool) }
                     }
                 }
             }
