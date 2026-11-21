@@ -698,6 +698,24 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         select(null)
     }
 
+    /** Moves the selected clip one lane towards the front of the stack (up on screen). */
+    fun stackForward() {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        edit(select = { id }) { restack(id, 1) }
+    }
+
+    /** Moves the selected clip one lane towards the back of the stack (down on screen). */
+    fun stackBackward() {
+        val id = selected ?: run {
+            message = "Select a clip first"
+            return
+        }
+        edit(select = { id }) { restack(id, -1) }
+    }
+
     /** Duplicates the selected clip. */
     fun duplicateSelected() {
         val id = selected ?: run {

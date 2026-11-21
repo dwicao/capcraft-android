@@ -342,6 +342,14 @@ private fun ClipMenuBody(vm: EditorViewModel, m: ClipMenu) {
             vm.clipMenu = null
             vm.splitAtPlayhead()
         }
+        ClipMenuEntry("Bring forward") {
+            vm.clipMenu = null
+            vm.stackForward()
+        }
+        ClipMenuEntry("Send backward") {
+            vm.clipMenu = null
+            vm.stackBackward()
+        }
         ClipMenuEntry("Duplicate") {
             vm.clipMenu = null
             vm.duplicateSelected()

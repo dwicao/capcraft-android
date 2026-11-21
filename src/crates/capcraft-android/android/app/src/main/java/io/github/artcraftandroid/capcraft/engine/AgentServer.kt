@@ -349,6 +349,18 @@ object AgentServer {
             "session.reorderMain" -> viewOf(edited(request.getString("path")) {
                 reorderMain(request.getString("clipId"), request.getInt("index").toUInt())
             })
+            "session.restack" -> viewOf(edited(request.getString("path")) {
+                restack(request.getString("clipId"), request.getInt("step"))
+            })
+            "session.arrange" -> viewOf(edited(request.getString("path")) {
+                arrange(request.getString("clipId"), request.getString("targetId"), request.getBoolean("above"))
+            })
+            "session.toMain" -> viewOf(edited(request.getString("path")) {
+                toMain(request.getString("clipId"))
+            })
+            "session.toOverlay" -> viewOf(edited(request.getString("path")) {
+                toOverlay(request.getString("clipId"))
+            })
             "session.update" -> viewOf(edited(request.getString("path")) {
                 val patch = request.get("patch")
                 apply(

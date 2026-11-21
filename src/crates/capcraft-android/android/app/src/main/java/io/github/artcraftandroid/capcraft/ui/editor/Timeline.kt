@@ -87,86 +87,25 @@ object Track {
     const val MAX_ZOOM = 20f
 }
 
-/** The kinds of row under the main track, in the order the reference lists them. */
-private val KIND_ORDER = listOf(RowKind.OVERLAY, RowKind.AUDIO, RowKind.TEXT, RowKind.EFFECT, RowKind.FILTER)
-
-/** The rows below the main track, in the order the timeline lists them. */
-fun orderedRows(rows: List<RowView>): List<RowView> =
-    rows.filter { it.kind == RowKind.MAIN } + KIND_ORDER.flatMap { kind -> rows.filter { it.kind == kind } }
-
-/**
- * With nothing open, each kind on rows of its own, as the reference's timeline rests: the clips of
- * all its lanes together, the back lane's first so the front's draw over them. Clips that overlap
- * in time get their own sub-row (greedy interval packing), so piled-up titles, overlays or effects
- * fan out vertically instead of painting over each other — and the timeline scrolls to show them.
- * A sub-row keeps its lane's id: dragging a clip up or down moves it onto that lane, Canva-style.
- */
-private fun mergedRows(rows: List<RowView>): List<RowView> =
-    rows.filter { it.kind == RowKind.MAIN } + KIND_ORDER.flatMap { kind ->
-        val lanes = rows.filter { it.kind == kind }
-        if (lanes.isEmpty()) return@flatMap emptyList()
-        val clips = lanes.flatMap { lane -> lane.clips.map { it to lane.trackId } }.sortedBy { it.first.startUs }
-        // lane per original track, split further where clips of one lane overlap
-        val subs = mutableListOf<Pair<MutableList<ClipView>, String>>()
-        for ((clip, trackId) in clips) {
-            val end = clip.startUs + clip.durationUs
-            val existing: Pair<MutableList<ClipView>, String>? = subs.firstOrNull { entry ->
-                entry.second == trackId && (entry.first.lastOrNull()?.let { last ->
-                    last.startUs + last.durationUs <= clip.startUs
-                } ?: true)
-            }
-            val sub: Pair<MutableList<ClipView>, String> = existing
-                ?: (mutableListOf<ClipView>() to trackId).also { subs.add(it) }
-            // zero-length markers ride the lane they sit on without blocking it
-            if (end > clip.startUs) sub.first.add(clip) else (subs.firstOrNull() ?: sub).first.add(clip)
-        }
-        val muted = lanes.all { it.muted }
-        val visible = lanes.any { it.visible }
-        subs.map { (list, trackId) ->
-            RowView(
-                trackId = trackId,
-                kind = kind,
-                muted = muted,
-                visible = visible,
-                allVideos = false,
-                clips = list,
-            )
-        }
-    }
-
-/** A folded row's line: the colour its clips are known by. */
-private fun foldColour(kind: RowKind): Color = when (kind) {
-    RowKind.AUDIO -> Palette.AudioWave
-    RowKind.TEXT -> Palette.TextClip
-    RowKind.EFFECT -> Palette.EffectClip
-    RowKind.FILTER -> Palette.FilterClip
-    else -> Color(0xFF8A8A8A)
+/** Display groups, top-down (front first), Canva-style: the main track sits at the bottom as the
+ *  background, overlays above it, looks over those, titles and sound at the top. An effect that
+ *  treats every picture stacks with the looks; one that treats the main track alone sits under
+ *  the overlays, where the engine's tiers put it. */
+private fun groupIndex(row: RowView): Int = when (row.kind) {
+    RowKind.AUDIO -> 0
+    RowKind.TEXT -> 1
+    RowKind.FILTER -> 2
+    RowKind.EFFECT -> if (row.allVideos) 2 else 4
+    RowKind.OVERLAY -> 3
+    RowKind.MAIN -> 5
 }
 
 /**
- * The kinds of row a dock group works on, the rest folding while it is open; with no group open, a
- * selected clip off the main track keeps its own kind open the same way. Null when nothing folds.
+ * The rows top-down: the front of the stack at the top, the main track at the bottom. Stable
+ * (Kotlin's sort is): lanes keep the engine's order inside a group, and one lane is always one
+ * row, so a clip's row never jumps when clips slide in time.
  */
-private fun openKinds(vm: EditorViewModel): Set<RowKind>? {
-    // a selected clip off the main track keeps its own row open, whatever group is open; a selected
-    // main clip leaves the rows as they were, the group's open or all at rest, as the reference does
-    val row = vm.selectedRow?.takeIf { vm.selected != null }
-    if (row == RowKind.MAIN) return groupKinds(vm)
-    row?.let { return setOf(it) }
-    return groupKinds(vm)
-}
-
-private fun groupKinds(vm: EditorViewModel): Set<RowKind>? = when (val level = vm.dock.lastOrNull()) {
-    is DockLevel.Group -> when (level.id) {
-        "audio" -> setOf(RowKind.AUDIO)
-        "text", "captions" -> setOf(RowKind.TEXT)
-        "effects" -> setOf(RowKind.EFFECT)
-        "filters" -> setOf(RowKind.FILTER)
-        "overlay" -> setOf(RowKind.OVERLAY)
-        else -> emptySet()
-    }
-    else -> null
-}
+fun orderedRows(rows: List<RowView>): List<RowView> = rows.sortedBy(::groupIndex)
 
 /** Ruler steps, seconds: the first whose spacing is at least half a second's base width is used. */
 private val STEPS = doubleArrayOf(1.0 / 30, 0.05, 1.0 / 12, 1.0 / 6, 0.25, 0.5, 1.0, 1.5, 2.5, 5.0, 10.0, 15.0, 30.0, 60.0, 90.0, 150.0, 300.0, 600.0, 900.0)
@@ -179,48 +118,30 @@ private class Layout(
     val playhead: Long,
     val pxPerUs: Float,
     val vScroll: Float,
+    /** The rows top-down: the front of the stack at the top, the main track at the bottom. */
     val rows: List<RowView>,
-    /** The kinds of row a dock group has open; the others fold to thin lines. Null with no group open. */
-    val open: Set<RowKind>? = null,
 ) {
     val rulerH = Track.RULER * dp
-    val mainTop = (Track.RULER + Track.RULER_GAP) * dp
+    /** The main track's bottom edge, measured from the top of the canvas before scrolling. */
+    val rowsBottom = (Track.RULER + Track.RULER_GAP + Track.MAIN) * dp
     val mainH = Track.MAIN * dp
     val rowH = Track.ROW * dp
     val gap = Track.GAP * dp
     val addH = Track.ADD_ROW * dp
+    /** The rows' top-down index of the main track (-1 when it is missing). */
+    val mainIndex: Int get() = rows.indexOfFirst { it.kind == RowKind.MAIN }
 
-    /** The hint rows shown until there is sound, and until there are titles; none in a group. */
-    val showAddAudio = open == null && rows.firstOrNull()?.clips?.isNotEmpty() == true && rows.none { it.kind == RowKind.AUDIO }
-    val showAddText = open == null && rows.firstOrNull()?.clips?.isNotEmpty() == true && rows.none { it.kind == RowKind.TEXT }
+    /** The hint rows shown until there is sound, and until there are titles. */
+    val showAddAudio = rows.firstOrNull { it.kind == RowKind.MAIN }?.clips?.isNotEmpty() == true && rows.none { it.kind == RowKind.AUDIO }
+    val showAddText = rows.firstOrNull { it.kind == RowKind.MAIN }?.clips?.isNotEmpty() == true && rows.none { it.kind == RowKind.TEXT }
 
-    /** A folded row's line. */
-    val foldH = 1f * dp
-
-    /** Whether row [index] is folded to a line, the group open being of another kind. */
-    fun folded(index: Int): Boolean = open != null && index > 0 && rows.getOrNull(index)?.kind?.let { it !in open } == true
-
-    /** Each row's top before scrolling, and past the last the top of what follows the rows. */
-    private val tops = FloatArray(maxOf(rows.size + 1, 2)).also { t ->
-        var y = mainTop + mainH
-        var below = 0
-        var lastFolded = false
-        for (i in 1..rows.size) {
-            // folded rows are thin lines in place, never stacked over the
-            // main track: piling them upward hid them and broke scrolling
-            val f = i < rows.size && folded(i)
-            val before = when {
-                i == rows.size -> if (below == 0) Track.FIRST_GAP * dp else gap
-                below == 0 -> if (f) 8 * dp else Track.FIRST_GAP * dp
-                f || lastFolded -> 5 * dp
-                else -> gap
-            }
-            t[i] = y + before
-            if (i < rows.size) {
-                y = t[i] + rowHeight(i)
-                below++
-                lastFolded = f
-            }
+    /** Each row's top before scrolling: the stack rises from the main track's bottom. */
+    private val tops = FloatArray(maxOf(rows.size, 1)).also { t ->
+        var y = rowsBottom
+        for (i in rows.indices.reversed()) {
+            y -= rowHeight(i)
+            t[i] = y
+            if (i > 0) y -= gap
         }
     }
     private val adds = (if (showAddAudio) 1 else 0) + (if (showAddText) 1 else 0)
@@ -228,21 +149,21 @@ private class Layout(
     fun x(t: Long): Float = width / 2f + (t - playhead) * pxPerUs
     fun time(x: Float): Long = playhead + ((x - width / 2f) / pxPerUs).toLong()
 
-    /** The tops of the rows under the main track: the rows first, then the add rows under them. */
+    /** The top of row [index], from the top of the canvas. */
     fun rowTop(index: Int): Float =
-        if (index == 0) mainTop - vScroll else tops[index.coerceIn(1, rows.size.coerceAtLeast(1))] - vScroll
+        tops[index.coerceIn(0, rows.size.coerceAtLeast(1) - 1)] + vScroll
 
-    private fun hintTop(slot: Int): Float = rowTop(max(1, rows.size)) + slot * (addH + gap)
+    private fun hintTop(slot: Int): Float = rowTop(0) - (slot + 1) * (addH + gap)
 
-    fun rowHeight(index: Int): Float = when {
-        index == 0 -> mainH
-        folded(index) -> foldH
-        else -> rowH
-    }
+    fun rowHeight(index: Int): Float = if (rows.getOrNull(index)?.kind == RowKind.MAIN) mainH else rowH
 
-    /** How far the rows can scroll up. */
+    /** The content's top edge before scrolling (hint rows included). */
+    private val contentTop: Float
+        get() = (if (rows.isEmpty()) rowsBottom else tops[0]) - adds * (addH + gap)
+
+    /** How far the rows can scroll down: until the top row sits under the ruler. */
     val maxScroll: Float
-        get() = max(0f, hintTop(adds) + vScroll + 24 * dp - height)
+        get() = max(0f, rulerH + 8 * dp - contentTop)
 
     fun clipRect(rowIndex: Int, clip: ClipView): Rect {
         val top = rowTop(rowIndex)
@@ -254,7 +175,6 @@ private class Layout(
     /** The clip at a point, with its row index: the one drawn on top where clips of a row overlap. */
     fun hit(at: Offset): Pair<Int, ClipView>? {
         rows.forEachIndexed { i, row ->
-            if (folded(i)) return@forEachIndexed
             row.clips.lastOrNull { c -> clipRect(i, c).contains(at) }?.let { return i to it }
         }
         return null
@@ -264,7 +184,7 @@ private class Layout(
     val addButton: Rect
         get() {
             val s = 36 * dp
-            val top = mainTop - vScroll + (mainH - s) / 2
+            val top = rowTop(mainIndex.coerceAtLeast(0)) + (mainH - s) / 2
             return Rect(width - s - 12 * dp, top, width - 12 * dp, top + s)
         }
 
@@ -272,7 +192,8 @@ private class Layout(
     val coverTile: Rect
         get() {
             val right = x(0) - (Track.HANDLE + 10) * dp
-            return Rect(right - mainH, mainTop - vScroll, right, mainTop - vScroll + mainH)
+            val top = rowTop(mainIndex.coerceAtLeast(0))
+            return Rect(right - mainH, top, right, top + mainH)
         }
 
     /** The mute-sound tile, before the cover. */
@@ -287,9 +208,9 @@ private class Layout(
      * handles cover the cuts at its ends, so those have none.
      */
     fun transitionButtons(selected: String?): List<Pair<Rect, ClipView>> {
-        val main = rows.firstOrNull() ?: return emptyList()
+        val main = rows.firstOrNull { it.kind == RowKind.MAIN } ?: return emptyList()
         val s = 20 * dp
-        val cy = mainTop - vScroll + mainH / 2
+        val cy = rowTop(mainIndex.coerceAtLeast(0)) + mainH / 2
         return main.clips.zipWithNext().filter { (prev, next) -> prev.id != selected && next.id != selected }.map { (_, next) ->
             val cx = x(next.startUs)
             Rect(cx - s / 2, cy - s / 2, cx + s / 2, cy + s / 2) to next
@@ -335,6 +256,8 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     var fling by remember { mutableStateOf<Job?>(null) }
     /** A clip picked up by a long press. */
     var drag by remember { mutableStateOf<Drag?>(null) }
+    /** The layout of the frame the drag ends on, for the drop's row math. */
+    val dropLayout = remember { mutableStateOf<Layout?>(null) }
     val haptics = LocalHapticFeedback.current
     val thumbsVersion = Thumbs.version.intValue
 
@@ -359,10 +282,9 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     val hintFilter = rememberVectorPainter(LucideIcons.Blend)
 
     val timeline = vm.timeline
-    // with nothing open, one row per kind; a group or a selection opens its kind's lanes
-    val resting = openKinds(vm) == null
-    val rows = remember(timeline, resting) {
-        timeline?.rows?.let(::orderedRows)?.let { if (resting) mergedRows(it) else it }.orEmpty()
+    // Canva-style: the front of the stack on top, the main track at the bottom, one row per lane.
+    val rows = remember(timeline) {
+        timeline?.rows?.let(::orderedRows).orEmpty()
     }
     // a gesture reads the rows as they are now: a press that selects a clip opens its kind mid-gesture
     val currentRows = rememberUpdatedState(rows)
@@ -415,7 +337,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         fling?.cancel()
                         // DeX: the right mouse button selects the clip and opens its menu
                         if (currentEvent.buttons.isSecondaryPressed) {
-                            val layout = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, Track.DP_PER_SECOND * dp * zoom / 1_000_000f, vScroll, currentRows.value, openKinds(vm))
+                            val layout = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, Track.DP_PER_SECOND * dp * zoom / 1_000_000f, vScroll, currentRows.value)
                             val hit = layout.hit(down.position)
                             if (hit != null) {
                                 vm.select(hit.second.id)
@@ -434,7 +356,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         }
                         val pxPerUs0 = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
                         val rows = currentRows.value
-                        val layout0 = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, pxPerUs0, vScroll, rows, openKinds(vm))
+                        val layout0 = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, pxPerUs0, vScroll, rows)
                         // A handle of the selected clip?
                         val sel = vm.selected?.let { id ->
                             rows.indexOfFirst { r -> r.clips.any { it.id == id } }.takeIf { it >= 0 }?.let { i ->
@@ -499,7 +421,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                                 if (vm.playing) vm.stop()
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 vm.select(under.second.id)
-                                // selected, its kind opens with its lanes apart: the drag goes on from its own lane's row
+                                // the drag goes on from the clip's own row: one lane is one row now
                                 val opened = vm.timeline?.rows?.let(::orderedRows).orEmpty()
                                 val lane = opened.indexOfFirst { r -> r.clips.any { it.id == under.second.id } }
                                 drag = Drag(under.second.id, if (lane >= 0) lane else under.first, 0f, 0f)
@@ -569,16 +491,18 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                                     showTrim(threshold)
                                 }
                                 4 -> {
-                                    val l = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, pxPerUs, vScroll, currentRows.value, openKinds(vm))
-                                    vScroll = (vScroll - delta.y).coerceIn(0f, l.maxScroll)
+                                    val l = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, pxPerUs, vScroll, currentRows.value)
+                                    vScroll = (vScroll + delta.y).coerceIn(0f, l.maxScroll)
                                 }
                                 5 -> {
                                     val d = drag
+                                    dropLayout.value = Layout(size.width.toFloat(), size.height.toFloat(), dp, vm.playhead, Track.DP_PER_SECOND * dp * zoom / 1_000_000f, vScroll, currentRows.value)
                                     if (d != null) {
                                         val raw = d.dx + delta.x
                                         var shownDx = raw
                                         val clip = vm.clip(d.clipId)
-                                        if (clip != null && d.row != 0) {
+                                        val onMainDrag = currentRows.value.getOrNull(d.row)?.kind == RowKind.MAIN
+                                        if (clip != null && !onMainDrag) {
                                             val start = clip.startUs + (raw / pxPerUs).toLong()
                                             val end = start + clip.durationUs
                                             val targets = snapTargets(currentRows.value, clip.id, vm.playhead) + vm.allBeatTimes()
@@ -619,7 +543,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                             5 -> {
                                 val d = drag
                                 drag = null
-                                if (d != null) dropClip(vm, currentRows.value, d, Track.DP_PER_SECOND * dp * zoom / 1_000_000f, dp)
+                                if (d != null) dropLayout.value?.let { dropClip(vm, it, currentRows.value, d, Track.DP_PER_SECOND * dp * zoom / 1_000_000f) }
                             }
                         }
                     }
@@ -627,7 +551,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
         ) {
             @Suppress("UNUSED_EXPRESSION") thumbsVersion
             val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-            val layout = Layout(size.width, size.height, dp, vm.playhead, pxPerUs, vScroll.coerceAtMost(Float.MAX_VALUE), rows, openKinds(vm))
+            val layout = Layout(size.width, size.height, dp, vm.playhead, pxPerUs, vScroll.coerceAtMost(Float.MAX_VALUE), rows)
             drawRect(Palette.Timeline)
             drawRuler(layout, measurer)
             // the time, at the left of the ruler band
@@ -638,13 +562,11 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
             drawText(now, topLeft = Offset(16 * dp, ty))
             drawText(total, topLeft = Offset(16 * dp + now.size.width, ty))
             clipRect(top = layout.rulerH + 2 * dp) {
-                // at rest, a band behind each row of sound, titles and effects, from the start on
-                if (layout.open == null) {
-                    rows.forEachIndexed { index, row ->
-                        if (index == 0 || row.kind == RowKind.OVERLAY) return@forEachIndexed
-                        val top = layout.rowTop(index)
-                        drawRect(Palette.HintRow, Offset(layout.x(0), top), Size(size.width - layout.x(0), layout.rowHeight(index)))
-                    }
+                // a band behind each row of sound, titles and effects, from the start on
+                rows.forEachIndexed { index, row ->
+                    if (row.kind == RowKind.MAIN || row.kind == RowKind.OVERLAY) return@forEachIndexed
+                    val top = layout.rowTop(index)
+                    drawRect(Palette.HintRow, Offset(layout.x(0), top), Size(size.width - layout.x(0), layout.rowHeight(index)))
                 }
                 rows.forEachIndexed { index, row ->
                     // the selected clip last, so its handles lie over its neighbours
@@ -658,10 +580,6 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         val d = drag
                         if (d != null && d.clipId == clip.id) return@forEach
                         if (r.right < 0 || r.left > size.width) return@forEach
-                        if (layout.folded(index)) {
-                            drawRect(foldColour(row.kind), Offset(r.left, r.top), Size(r.width, layout.foldH))
-                            return@forEach
-                        }
                         drawClip(vm, row.kind, clip, r, layout, measurer, textIcon, effectIcon, filterIcon, musicIcon)
                     }
                 }
@@ -669,27 +587,24 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                 drag?.let { d ->
                     val row = rows.getOrNull(d.row) ?: return@let
                     val clip = row.clips.firstOrNull { it.id == d.clipId } ?: return@let
-                    val r = layout.clipRect(d.row, clip).translate(d.shownDx, if (d.row == 0) 0f else d.dy)
-                    if (d.row != 0) {
-                        // Canva-style lane target: highlight the row the clip would land on
-                        val step = (Track.ROW + Track.GAP) * dp
-                        val target = (d.row + (d.dy / step).roundToInt()).coerceIn(1, rows.size - 1)
-                        val targetRow = rows.getOrNull(target)?.takeIf { it.kind == row.kind }
-                        if (targetRow != null) {
-                            val ty = layout.rowTop(target)
-                            val th = layout.rowHeight(target)
-                            drawRoundRect(
-                                Palette.Accent.copy(alpha = 0.22f),
-                                Offset(0f, ty), Size(size.width, th),
-                                CornerRadius(4 * dp),
-                            )
-                            drawRect(Palette.Accent, Offset(0f, ty), Size(size.width, 2 * dp))
-                            drawRect(Palette.Accent, Offset(0f, ty + th - 2 * dp), Size(size.width, 2 * dp))
-                        }
+                    val onMain = row.kind == RowKind.MAIN
+                    val r = layout.clipRect(d.row, clip).translate(d.shownDx, if (onMain) 0f else d.dy)
+                    if (!onMain) {
+                        // Canva-style target: highlight the row under the finger
+                        val target = targetRow(layout, rows, d.row, d.dy)
+                        val ty = layout.rowTop(target)
+                        val th = layout.rowHeight(target)
+                        drawRoundRect(
+                            Palette.Accent.copy(alpha = 0.22f),
+                            Offset(0f, ty), Size(size.width, th),
+                            CornerRadius(4 * dp),
+                        )
+                        drawRect(Palette.Accent, Offset(0f, ty), Size(size.width, 2 * dp))
+                        drawRect(Palette.Accent, Offset(0f, ty + th - 2 * dp), Size(size.width, 2 * dp))
                     }
                     drawRoundRect(Color(0x55000000), r.topLeft + Offset(0f, 4 * dp), r.size, CornerRadius(4 * dp))
                     drawClip(vm, row.kind, clip, r, layout, measurer, textIcon, effectIcon, filterIcon, musicIcon)
-                    if (d.row == 0) {
+                    if (onMain) {
                         // where it will land among the main track's clips
                         val x = mainDropX(layout, row, clip, r.center.x)
                         drawLine(Palette.Accent, Offset(x, r.top - 4 * dp), Offset(x, r.bottom + 4 * dp), 3 * dp)
@@ -725,7 +640,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                         RowKind.FILTER -> hintFilter
                         else -> null
                     }
-                    if (i == 0 || icon == null || layout.folded(i) || layout.rows.indexOfFirst { it.kind == row.kind } != i) return@forEachIndexed
+                    if (icon == null || layout.rows.indexOfFirst { it.kind == row.kind } != i) return@forEachIndexed
                     val top = layout.rowTop(i)
                     val tile = layout.hintTile(Rect(0f, top, 0f, top + layout.rowHeight(i)))
                     if (tile.right > 0) {
@@ -814,10 +729,10 @@ private fun mainDropX(layout: Layout, row: RowView, moving: ClipView, centerX: F
 }
 
 /** Lets go of a dragged clip: main-track clips change place in the order; others move in time and between rows of their kind. */
-private fun dropClip(vm: EditorViewModel, rows: List<RowView>, d: Drag, pxPerUs: Float, dp: Float) {
+private fun dropClip(vm: EditorViewModel, layout: Layout, rows: List<RowView>, d: Drag, pxPerUs: Float) {
     val row = rows.getOrNull(d.row) ?: return
     val clip = row.clips.firstOrNull { it.id == d.clipId } ?: return
-    if (d.row == 0) {
+    if (row.kind == RowKind.MAIN) {
         val others = row.clips.filter { it.id != clip.id }
         val centre = clip.startUs + clip.durationUs / 2 + (d.shownDx / pxPerUs).toLong()
         var t = 0L
@@ -830,14 +745,53 @@ private fun dropClip(vm: EditorViewModel, rows: List<RowView>, d: Drag, pxPerUs:
         if (index != from) vm.edit { reorderMain(clip.id, index.toUInt()) }
         return
     }
-    // rows of the same kind the finger passed over
-    val step = (Track.ROW + Track.GAP) * dp
-    val target = (d.row + (d.dy / step).roundToInt()).coerceIn(1, rows.size - 1)
-    val trackId = rows.getOrNull(target)?.takeIf { it.kind == row.kind }?.trackId ?: ""
     val start = (clip.startUs + (d.shownDx / pxPerUs).toLong()).coerceAtLeast(0)
-    if (start != clip.startUs || (trackId.isNotEmpty() && trackId != row.trackId)) {
-        vm.edit(select = { clip.id }) { moveClip(clip.id, trackId, start) }
+    // which row the finger is over, by its real top (heights differ: main is taller)
+    val target = targetRow(layout, rows, d.row, d.dy)
+    val targetRow = rows.getOrNull(target)
+    if (start == clip.startUs && (targetRow == null || targetRow.trackId == row.trackId)) return
+    if (targetRow != null && targetRow.trackId != row.trackId && targetRow.kind == row.kind) {
+        // another lane of the same kind: the drop moves the clip onto that lane
+        vm.edit(select = { clip.id }) { moveClip(clip.id, targetRow.trackId, start) }
+    } else if (target != d.row && targetRow != null && (row.kind == RowKind.OVERLAY || row.kind == RowKind.TEXT) && (targetRow.kind == RowKind.OVERLAY || targetRow.kind == RowKind.TEXT)) {
+        // overlays, titles and stickers stack across kinds: arrange above/below the row's clip
+        val anchor = targetRow.clips.minByOrNull { abs(it.startUs - start) }
+        if (anchor != null) {
+            val above = target < d.row
+            vm.edit(select = { clip.id }) { arrange(clip.id, anchor.id, above) }
+            return
+        }
+        vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+    } else {
+        // same lane, a new time — or a refused cross-kind move just slides in time
+        vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
     }
+}
+
+/** The row the dragged clip would land on: the row whose drawn band holds the finger's Y. */
+private fun targetRow(layout: Layout, rows: List<RowView>, from: Int, dy: Float): Int {
+    val row = rows.getOrNull(from) ?: return from
+    val clip = row.clips.firstOrNull() ?: return from
+    val y = layout.clipRect(from, clip).center.y + dy
+    rows.forEachIndexed { i, _ ->
+        val r = layoutRowBand(layout, i)
+        if (y >= r.top && y <= r.bottom) return i
+    }
+    // past either end: the nearest end row
+    var best = from
+    var gap = Float.MAX_VALUE
+    rows.forEachIndexed { i, _ ->
+        val r = layoutRowBand(layout, i)
+        val d = if (y < r.top) r.top - y else y - r.bottom
+        if (d < gap) { gap = d; best = i }
+    }
+    return best
+}
+
+/** The drawn band of row [index]: its clips' band. */
+private fun layoutRowBand(layout: Layout, index: Int): Rect {
+    val top = layout.rowTop(index)
+    return Rect(0f, top, layout.width, top + layout.rowHeight(index))
 }
 
 private fun onTap(vm: EditorViewModel, layout: Layout, at: Offset, playhead: Long, pickMain: (PickVisualMediaRequest) -> Unit) {
@@ -920,7 +874,7 @@ private fun DrawScope.drawLeadingTiles(
     pencil: androidx.compose.ui.graphics.vector.VectorPainter,
 ) {
     val dp = layout.dp
-    val main = layout.rows.firstOrNull() ?: return
+    val main = layout.rows.firstOrNull { it.kind == RowKind.MAIN } ?: return
     if (main.clips.isEmpty()) return
     val mute = layout.muteTile
     if (mute.right > 0) {
@@ -1060,8 +1014,8 @@ private fun DrawScope.drawClip(
             // what an effect treats, then its name, each on a chip, as the reference labels them
             clipRectRounded(inner, radius) {
                 var x = max(inner.left, 0f) + 6 * dp
-                // what it treats shows once its kind is open, as the reference keeps the resting row to names
-                if (!filter && layout.open != null) {
+                // what it treats: the Main/All chip, always visible
+                if (!filter) {
                     val all = vm.rowOf(clip.id)?.allVideos == true
                     x = drawChip(if (all) "All videos" else "Main video", x, inner, Color(0xD9FFFFFF), fill, measurer, dp)
                 }

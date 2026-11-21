@@ -53,7 +53,7 @@ def main():
         out = subprocess.run([sys.executable, BRIDGE, "--list-tools"],
                              capture_output=True, text=True, timeout=15)
         names = out.stdout.split()
-        check("list-tools names 34 tools", len(names) == 34, f"got {len(names)}: {names}")
+        check("list-tools names 38 tools", len(names) == 38, f"got {len(names)}: {names}")
         check("list-tools names are unique", len(set(names)) == len(names))
         for want in ("capcraft_status", "project_open", "clip_add", "title_add",
                      "captions_add", "export_start", "export_wait", "preview_frame"):

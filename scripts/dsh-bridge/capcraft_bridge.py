@@ -465,6 +465,53 @@ add(edit_tool(
 ))
 
 add(edit_tool(
+    "clip_stack", "Restack a clip",
+    "Moves the lane holding `clipId` among the lanes of its kind: `step` rows "
+    "towards the front (positive, up on screen) or the back (negative). The "
+    "main track never moves. One undo step; returns the timeline.",
+    "restack",
+    {"path": string("The project folder."),
+     "clipId": string("The clip to restack."),
+     "step": integer("Lanes towards the front (positive) or the back (negative).")},
+    ("path", "clipId", "step"),
+))
+
+add(edit_tool(
+    "clip_arrange", "Arrange a clip against another",
+    "Puts `clipId` just above (`above` true) or below the lane holding "
+    "`targetId`, whatever each holds: a title can go under an overlay. A clip "
+    "alone on its lane moves with the lane; one that shares it moves by "
+    "itself onto a new lane there. The main track never moves and nothing "
+    "goes under it. One undo step; returns the timeline.",
+    "arrange",
+    {"path": string("The project folder."),
+     "clipId": string("The clip to move."),
+     "targetId": string("The clip to arrange against."),
+     "above": boolean("Above the target's lane (`true`) or below it.")},
+    ("path", "clipId", "targetId", "above"),
+))
+
+add(edit_tool(
+    "clip_to_main", "Move a clip to the main track",
+    "Moves a clip of an overlay row onto the main track, at the clip boundary "
+    "nearest its start; the main track makes room. One undo step.",
+    "toMain",
+    {"path": string("The project folder."),
+     "clipId": string("The overlay clip to move.")},
+    ("path", "clipId"),
+))
+
+add(edit_tool(
+    "clip_to_overlay", "Move a clip off to an overlay row",
+    "Moves a main-track clip onto an overlay row at the same time; the main "
+    "track closes up behind it. One undo step.",
+    "toOverlay",
+    {"path": string("The project folder."),
+     "clipId": string("The main-track clip to move.")},
+    ("path", "clipId"),
+))
+
+add(edit_tool(
     "clip_update", "Change a clip's properties",
     "Changes clip properties: `patch` holds the engine's field names (volume, "
     "opacity, flipH, videoEffects, ...).",
@@ -564,6 +611,10 @@ EDIT_METHODS = {
     "trim": "session.trim",
     "moveClip": "session.moveClip",
     "reorderMain": "session.reorderMain",
+    "restack": "session.restack",
+    "arrange": "session.arrange",
+    "toMain": "session.toMain",
+    "toOverlay": "session.toOverlay",
     "update": "session.update",
 }
 

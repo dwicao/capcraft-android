@@ -66,9 +66,9 @@ fun ArrangeLayersPanel(vm: EditorViewModel) {
     var textOnly by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     val at = vm.playhead
-    // the timeline's rows run from the back of the stack to the front; each gives the picked clip,
+    // the timeline's rows run from the front of the stack to the back; each gives the picked clip,
     // or the one it shows at the playhead
-    val layers = vm.timeline?.rows.orEmpty().reversed()
+    val layers = vm.timeline?.rows.orEmpty()
         .filter { it.kind == RowKind.TEXT || (!textOnly && it.kind == RowKind.OVERLAY) }
         .mapNotNull { row -> row.clips.firstOrNull { it.id == clip.id } ?: row.clips.firstOrNull { at >= it.startUs && at < it.startUs + it.durationUs } }
     val place = layers.indexOfFirst { it.id == clip.id }
