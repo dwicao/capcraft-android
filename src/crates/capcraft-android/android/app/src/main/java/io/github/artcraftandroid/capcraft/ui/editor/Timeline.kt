@@ -37,7 +37,6 @@ import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.isSecondaryPressed
 import androidx.compose.ui.input.pointer.positionChange
-import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -372,30 +371,6 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
         Canvas(
             Modifier
                 .fillMaxSize()
-                // DeX/desktop mouse wheel: vertical (bare or Shift) and horizontal
-                // wheels scrub the timeline; Ctrl+wheel zooms. A separate input
-                // so touch gestures below never see wheel events.
-                .pointerInput(vm) {
-                    while (true) {
-                        awaitEachGesture {
-                            val e = awaitPointerEvent()
-                            if (e.type != PointerEventType.Scroll) return@awaitEachGesture
-                            val d = e.scrollDelta
-                            val ctrl = e.keyboardModifiers.isCtrlPressed
-                            if (ctrl) {
-                                val factor = if ((d.y + d.x) > 0f) 1f / 1.15f else 1.15f
-                                vm.zoomTimeline(factor)
-                                e.changes.forEach { it.consume() }
-                                return@awaitEachGesture
-                            }
-                            val dx = d.y + d.x
-                            if (dx == 0f) return@awaitEachGesture
-                            val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-                            vm.scrub(vm.playhead + (dx * 24f / pxPerUs).toLong())
-                            e.changes.forEach { it.consume() }
-                        }
-                    }
-                }
                 .pointerInput(vm) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)

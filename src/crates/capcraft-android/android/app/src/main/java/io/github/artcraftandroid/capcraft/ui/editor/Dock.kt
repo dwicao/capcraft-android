@@ -45,8 +45,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -215,30 +213,30 @@ fun Dock(vm: EditorViewModel) {
                 } else {
                     // a tool put before the first (a collage's Layout) shows from the start, not scrolled past
                     val barScroll = remember(key, tools.firstOrNull()?.id) { androidx.compose.foundation.ScrollState(0) }
-                    val wheelScope = rememberCoroutineScope()
-                    Row(
-                        Modifier.fillMaxHeight()
-                            .horizontalScroll(barScroll)
-                            .pointerInput(barScroll) {
-                                // DeX/desktop mouse: vertical wheel (bare or with Shift) scrolls the bar
-                                // horizontally, so tools past the edge are reachable without touch-drag
-                                while (true) {
-                                    awaitEachGesture {
-                                        val e = awaitPointerEvent()
-                                        if (e.type != PointerEventType.Scroll) return@awaitEachGesture
-                                        val d = e.scrollDelta
-                                        val dx = (if (d.y != 0f) d.y else d.x).toInt()
-                                        if (dx == 0) return@awaitEachGesture
-                                        wheelScope.launch {
-                                            barScroll.scrollTo(barScroll.value + (dx * 3))
-                                        }
-                                        e.changes.forEach { it.consume() }
-                                    }
-                                }
-                            },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        tools.forEach { tool -> ToolItem(tool) }
+                    val barScope = rememberCoroutineScope()
+                    // chevrons page the bar left/right: mouse wheels do not surface scroll
+                    // deltas on this Compose version, so buttons (touch and mouse alike)
+                    // are the reliable way past the edge
+                    fun pageBar(dir: Int) {
+                        barScope.launch { barScroll.scrollTo(barScroll.value + dir * 360) }
+                    }
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                                .clickable { pageBar(-1) },
+                            contentAlignment = Alignment.Center,
+                        ) { Glyph(LucideIcons.ChevronLeft, Palette.DockText, size = 20.dp, description = "Scroll tools left") }
+                        Row(
+                            Modifier.weight(1f).fillMaxHeight().horizontalScroll(barScroll),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            tools.forEach { tool -> ToolItem(tool) }
+                        }
+                        Box(
+                            Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                                .clickable { pageBar(1) },
+                            contentAlignment = Alignment.Center,
+                        ) { Glyph(LucideIcons.ChevronRight, Palette.DockText, size = 20.dp, description = "Scroll tools right") }
                     }
                 }
             }
