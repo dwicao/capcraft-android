@@ -377,21 +377,23 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                 // so touch gestures below never see wheel events.
                 .pointerInput(vm) {
                     while (true) {
-                        val e = awaitPointerEvent()
-                        if (e.type != PointerEventType.Scroll) continue
-                        val d = e.scrollDelta
-                        val ctrl = e.keyboardModifiers.isCtrlPressed
-                        if (ctrl) {
-                            val factor = if ((d.y + d.x) > 0f) 1f / 1.15f else 1.15f
-                            vm.zoomTimeline(factor)
+                        awaitEachGesture {
+                            val e = awaitPointerEvent()
+                            if (e.type != PointerEventType.Scroll) return@awaitEachGesture
+                            val d = e.scrollDelta
+                            val ctrl = e.keyboardModifiers.isCtrlPressed
+                            if (ctrl) {
+                                val factor = if ((d.y + d.x) > 0f) 1f / 1.15f else 1.15f
+                                vm.zoomTimeline(factor)
+                                e.changes.forEach { it.consume() }
+                                return@awaitEachGesture
+                            }
+                            val dx = d.y + d.x
+                            if (dx == 0f) return@awaitEachGesture
+                            val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
+                            vm.scrub(vm.playhead + (dx * 24f / pxPerUs).toLong())
                             e.changes.forEach { it.consume() }
-                            continue
                         }
-                        val dx = d.y + d.x
-                        if (dx == 0f) continue
-                        val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
-                        vm.scrub(vm.playhead + (dx * 24f / pxPerUs).toLong())
-                        e.changes.forEach { it.consume() }
                     }
                 }
                 .pointerInput(vm) {

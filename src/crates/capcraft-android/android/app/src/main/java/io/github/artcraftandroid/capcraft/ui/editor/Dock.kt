@@ -4,7 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedContent
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -220,15 +220,14 @@ fun Dock(vm: EditorViewModel) {
                             .horizontalScroll(barScroll)
                             .pointerInput(barScroll) {
                                 // DeX/desktop mouse: vertical wheel (bare or with Shift) scrolls the bar
-                                // horizontally, so tools past the edge are reachable without touch-drag.
-                                // awaitPointerEvent() loops directly: inside pointerInput we already
-                                // are in the await scope, no wrapper call needed.
+                                // horizontally, so tools past the edge are reachable without touch-drag
                                 while (true) {
-                                    val e = awaitPointerEvent()
-                                    if (e.type != PointerEventType.Scroll) continue
-                                    val d = e.scrollDelta
-                                    val dx = (if (d.y != 0f) d.y else d.x).toInt()
-                                    if (dx != 0) {
+                                    awaitEachGesture {
+                                        val e = awaitPointerEvent()
+                                        if (e.type != PointerEventType.Scroll) return@awaitEachGesture
+                                        val d = e.scrollDelta
+                                        val dx = (if (d.y != 0f) d.y else d.x).toInt()
+                                        if (dx == 0) return@awaitEachGesture
                                         wheelScope.launch {
                                             barScroll.scrollTo(barScroll.value + (dx * 3))
                                         }
