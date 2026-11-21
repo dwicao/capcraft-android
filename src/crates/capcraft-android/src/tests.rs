@@ -1717,35 +1717,45 @@ fn elements_stack_as_one_tier_and_rows_grow() {
     let title = view.created_id.clone();
     // restack crosses overlay<->text freely now (one elements tier)
     let view = session.restack(title.clone(), -1).expect("restacked");
-    let row_of = |id: &str, view: &crate::session::TimelineView| {
+    let lane_of = |id: &str, view: &crate::session::TimelineView| {
         view.rows
             .iter()
-            .position(|row| row.clips.iter().any(|clip| clip.id == id))
+            .find(|row| row.clips.iter().any(|clip| clip.id == id))
+            .map(|row| row.track_id.clone())
     };
-    let (Some(under), Some(over)) = (row_of(&title, &view), row_of(&overlay, &view)) else {
-        panic!("both rows exist");
+    let (Some(title_lane), Some(overlay_lane)) = (lane_of(&title, &view), lane_of(&overlay, &view)) else {
+        panic!("both lanes exist");
     };
-    assert!(under < over, "the title went under the overlay");
-    // stack_to_row to the top display row (a gap row) grows the stack
+    assert_ne!(title_lane, overlay_lane, "the title left the overlay's lane");
+    // stack_to_lane by ID: onto the overlay's lane, then a fresh lane above it
+    let view = session
+        .stack_to_lane(title.clone(), overlay_lane.clone(), String::new(), false)
+        .expect("onto the overlay lane");
+    assert_eq!(
+        lane_of(&title, &view),
+        Some(overlay_lane.clone()),
+        "the title sits on the overlay's lane"
+    );
     let before = view.rows.len();
-    let view = session.stack_to_row(title.clone(), 0).expect("to top");
+    let view = session
+        .stack_to_lane(title.clone(), String::new(), overlay_lane.clone(), true)
+        .expect("to a fresh lane");
     assert_eq!(view.rows.len(), before + 1, "a fresh row grew above");
-    assert_eq!(row_of(&title, &view), Some(0), "the title sits on the new top row");
-    // audio stays in audio: a sound dropped on an elements row refuses
+    // audio stays in audio: a sound dropped on an elements lane refuses
     let sound = session
         .import_sound(media("cc-a-bars-16x9.mp4").expect("clip"))
         .expect("imports")
         .id;
     let view = session.add_audio(sound, 0).expect("sound");
     let clip = view.created_id.clone();
-    let view = session.stack_to_row(clip.clone(), 0).expect("refused");
-    let audio_row = view
+    let view = session
+        .stack_to_lane(clip.clone(), overlay_lane.clone(), String::new(), false)
+        .expect("refused");
+    let audio_kind = view
         .rows
         .iter()
-        .position(|row| row.clips.iter().any(|clip| clip.id == clip));
-    assert!(
-        audio_row.is_some_and(|i| view.rows[i].kind == RowKind::Audio),
-        "audio never leaks into elements"
-    );
+        .find(|row| row.clips.iter().any(|clip| clip.id == clip))
+        .map(|row| row.kind);
+    assert_eq!(audio_kind, Some(RowKind::Audio), "audio never leaks into elements");
     delete_project(made.path).expect("deleted");
 }

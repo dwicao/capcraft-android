@@ -512,16 +512,20 @@ add(edit_tool(
 ))
 
 add(edit_tool(
-    "clip_stack_row", "Move a clip to a timeline row",
-    "Moves `clipId` to display row `row` (top-down as the phone timeline "
-    "shows them: Elements rows, then main, then audio; gap rows grow the "
-    "stack with a fresh lane). Same tier only: pictures/titles stay in "
+    "clip_stack_lane", "Move a clip to a timeline lane",
+    "Moves `clipId` onto lane `laneId` (the `trackId` of a `project_get` row), "
+    "keeping its time when the lane is free over its span, else sliding to "
+    "the nearest free start there. Empty `laneId` grows a fresh lane beside "
+    "lane `anchorId` (`above` picks over vs under) — that is how a drop onto "
+    "a gap row grows the stack. Same tier only: pictures/titles stay in "
     "Elements, audio in audio, main never moves. One undo step.",
-    "stackToRow",
+    "stackToLane",
     {"path": string("The project folder."),
      "clipId": string("The clip to move."),
-     "row": integer("Display row index, top-down (0 is the topmost row).")},
-    ("path", "clipId", "row"),
+     "laneId": string("Destination lane id (a row's `trackId`); empty grows a new lane."),
+     "anchorId": string("Anchor lane id when `laneId` is empty."),
+     "above": boolean("Grow over the anchor lane (`true`) or under it.")},
+    ("path", "clipId"),
 ))
 
 add(edit_tool(
@@ -625,7 +629,7 @@ EDIT_METHODS = {
     "moveClip": "session.moveClip",
     "reorderMain": "session.reorderMain",
     "restack": "session.restack",
-    "stackToRow": "session.stackToRow",
+    "stackToLane": "session.stackToLane",
     "arrange": "session.arrange",
     "toMain": "session.toMain",
     "toOverlay": "session.toOverlay",

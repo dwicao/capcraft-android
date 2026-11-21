@@ -352,8 +352,13 @@ object AgentServer {
             "session.restack" -> viewOf(edited(request.getString("path")) {
                 restack(request.getString("clipId"), request.getInt("step"))
             })
-            "session.stackToRow" -> viewOf(edited(request.getString("path")) {
-                stackToRow(request.getString("clipId"), request.getLong("row"))
+            "session.stackToLane" -> viewOf(edited(request.getString("path")) {
+                stackToLane(
+                    request.getString("clipId"),
+                    request.optString("laneId"),
+                    request.optString("anchorId"),
+                    request.optBoolean("above"),
+                )
             })
             "session.arrange" -> viewOf(edited(request.getString("path")) {
                 arrange(request.getString("clipId"), request.getString("targetId"), request.getBoolean("above"))

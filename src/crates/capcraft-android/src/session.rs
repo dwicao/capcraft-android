@@ -1605,7 +1605,23 @@ impl MobileSession {
     /// The main track never moves and nothing lands on it; a main-track
     /// clip keeps its order, an audio clip stays inside audio, a picture
     /// or title stays inside elements. One undo step.
-    pub fn stack_to_row(&self, clip_id: String, row: i64) -> Result<TimelineView, MobileError> {
+    /// Moves `clip_id` onto the lane `lane_id` — or onto a fresh lane grown
+    /// beside it when `lane_id` is empty — keeping its time when the lane is
+    /// free over its span, else sliding to the nearest free start there.
+    /// `above` grows the fresh lane over the anchor lane, else under it; it
+    /// is ignored when `lane_id` names a lane. A gap row in the phone UI
+    /// passes an empty `lane_id` with the neighbouring lane as `anchor_id`:
+    /// that is how dragging onto empty space grows the stack. Lanes of the
+    /// main track never move and nothing lands on them; a main-track clip
+    /// keeps its order, an audio clip stays inside audio, a picture or title
+    /// stays inside elements. One undo step; a refused move keeps the view.
+    pub fn stack_to_lane(
+        &self,
+        clip_id: String,
+        lane_id: String,
+        anchor_id: String,
+        above: bool,
+    ) -> Result<TimelineView, MobileError> {
         let mut state = self.lock();
         let gesture = self.gesture();
         let result = (|| {
@@ -1620,55 +1636,65 @@ impl MobileSession {
             let Some(from) = rows.iter().position(|row| row.track_id == clip.track_id) else {
                 return Ok::<_, MobileError>(None);
             };
-            let places: Vec<usize> = (0..rows.len()).filter(|index| *index != from).collect();
-            if places.is_empty() {
-                return Ok(None);
-            }
-            let want = row.clamp(0, places.len() as i64 - 1) as usize;
-            let target = places[want];
-            let from_kind = rows[from].kind;
-            let target_kind = rows[target].kind;
-            if target_kind == RowKind::Main || !lanes::same_tier(from_kind, target_kind) {
+            if rows[from].kind == RowKind::Main {
                 return Ok(None);
             }
             let start = clip.start;
-            // the target row's own lane first, when it is free over the span
-            let target_lane = rows[target].track_id.clone();
-            let mut lane: Option<String> = None;
-            if timeline.is_free(&target_lane, start, clip.duration, &[clip_id.as_str()]) {
-                lane = Some(target_lane.clone());
-            }
-            // else the nearest free same-tier lane
-            if lane.is_none() {
-                lane = timeline
-                    .tracks
+            // resolve the lane: the named one, or a fresh lane beside the anchor
+            let lane: Option<String> = if lane_id.is_empty() {
+                None
+            } else if timeline.tracks.iter().any(|track| track.id == lane_id) {
+                // anchor kinds guard the tiers: main never takes part, and
+                // audio never mixes with elements
+                let anchor_kind = rows
                     .iter()
-                    .filter(|track| {
-                        rows.iter().any(|row| {
-                            row.track_id == track.id
-                                && lanes::same_tier(row.kind, from_kind)
-                        })
-                    })
-                    .filter(|track| {
-                        timeline.is_free(&track.id, start, clip.duration, &[clip_id.as_str()])
-                    })
-                    .map(|track| track.id.clone())
-                    .next();
-            }
-            // else a fresh lane beside the target row's lane (a gap row grows
-            // the stack: over it when the drop is above, under it when below)
+                    .find(|row| row.track_id == lane_id)
+                    .map(|row| row.kind);
+                match anchor_kind {
+                    Some(RowKind::Main) => return Ok(None),
+                    Some(kind)
+                        if !lanes::same_tier(kind, rows[from].kind) =>
+                    {
+                        return Ok(None)
+                    }
+                    _ => {}
+                }
+                Some(lane_id.clone())
+            } else {
+                return Ok(None);
+            };
             let lane = match lane {
                 Some(lane) => lane,
                 None => {
+                    let anchor = if timeline.tracks.iter().any(|track| track.id == anchor_id) {
+                        anchor_id.clone()
+                    } else {
+                        // no anchor (a gap past either end): grow at the
+                        // tier's edge — the highest lane when above, else
+                        // the lowest one of the clip's own tier
+                        let mut tier: Vec<String> = rows
+                            .iter()
+                            .filter(|row| lanes::same_tier(row.kind, rows[from].kind))
+                            .map(|row| row.track_id.clone())
+                            .collect();
+                        if tier.is_empty() {
+                            return Ok(None);
+                        }
+                        if above {
+                            tier.remove(0)
+                        } else {
+                            tier.pop().unwrap_or_default()
+                        }
+                    };
                     let at = timeline
                         .tracks
                         .iter()
-                        .position(|track| track.id == target_lane)
+                        .position(|track| track.id == anchor)
                         .unwrap_or(timeline.tracks.len());
-                    // UI rows run top-down (front first), engine lanes
-                    // bottom-up: a UI row above the clip's sits on a higher
-                    // engine lane, and vice versa
-                    let index = if target < from { at + 1 } else { at };
+                    // engine lanes run bottom-up while the phone UI runs
+                    // top-down: a drop visually above the anchor grows over
+                    // it (a higher engine lane), and vice versa
+                    let index = if above { at + 1 } else { at };
                     Self::apply_all(
                         &mut state,
                         vec![Command::InsertTrack { index: index.max(1) }],

@@ -790,11 +790,49 @@ private fun dropClip(vm: EditorViewModel, layout: Layout, rows: List<DisplayRow>
     val start = (clip.startUs + (d.shownDx / pxPerUs).toLong()).coerceAtLeast(0)
     val target = targetRow(layout, rows, d.row, d.dy)
     if (target == d.row && start == clip.startUs) return
-    // the engine resolves the display row to a lane (or a fresh one for a gap row)
-    vm.edit(select = { clip.id }) { stackToRow(clip.id, target.toLong()) }
-    // Nudge time when the row is the same but time moved: stackToRow keeps the
-    // clip where it sits only when the lane is taken; a pure time slide needs a move.
-    if (target == d.row) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+    val targetRow = rows.getOrNull(target)
+    val targetLane = targetRow?.lane
+    if (targetLane == null) {
+        // a gap row: grow a fresh lane beside the nearest lane row on the
+        // finger's side (above the gap) or the clip's own lane at the ends.
+        // the anchor must share the clip's tier; audio never grows elements.
+        val anchor = nearestLaneRow(rows, target, above = target < d.row)?.lane
+        if (anchor != null && anchor.kind != RowKind.MAIN && sameTierUi(anchor.kind, lane.kind)) {
+            vm.edit(select = { clip.id }) { stackToLane(clip.id, "", anchor.trackId, target < d.row) }
+        } else if (start != clip.startUs) {
+            vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        }
+        return
+    }
+    if (targetLane.kind == RowKind.MAIN) {
+        // main is background: a drop there only slides in time
+        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        return
+    }
+    if (!sameTierUi(targetLane.kind, lane.kind)) {
+        // across tiers (elements<->audio): refuse the row, keep the time slide
+        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        return
+    }
+    if (targetLane.trackId == lane.trackId) {
+        if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+        return
+    }
+    // the engine moves the clip onto that lane by its stable id, sliding in
+    // time only when the span is taken there
+    vm.edit(select = { clip.id }) { stackToLane(clip.id, targetLane.trackId, "", false) }
+    if (start != clip.startUs) vm.edit(select = { clip.id }) { moveClip(clip.id, "", start) }
+}
+
+/** Whether two row kinds stack in one tier in this UI: elements mix, audio stays apart. */
+private fun sameTierUi(a: RowKind, b: RowKind): Boolean =
+    (a == RowKind.AUDIO) == (b == RowKind.AUDIO) && a != RowKind.MAIN && b != RowKind.MAIN
+
+/** The nearest display row that carries a lane, searching up (`above`) or down from [at]. */
+private fun nearestLaneRow(rows: List<DisplayRow>, at: Int, above: Boolean): DisplayRow? {
+    if (above) for (i in at downTo 0) { rows.getOrNull(i)?.lane?.let { return rows[i] } }
+    else for (i in at until rows.size) { rows.getOrNull(i)?.lane?.let { return rows[i] } }
+    return rows.firstOrNull { it.lane != null }
 }
 
 /** The display row the dragged clip would land on: the row whose drawn band holds the finger's Y. */
