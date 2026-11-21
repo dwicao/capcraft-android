@@ -109,9 +109,8 @@ private fun mergedRows(rows: List<RowView>): List<RowView> =
         val subs = mutableListOf<Pair<MutableList<ClipView>, String>>()
         for ((clip, trackId) in clips) {
             val end = clip.startUs + clip.durationUs
-            val sub = subs.firstOrNull { (list, tid) ->
-                tid == trackId && (list.lastOrNull()?.let { it.startUs + it.durationUs <= clip.startUs } ?: true)
-            } ?: mutableListOf<ClipView>().also { subs.add(it to trackId) }
+            val sub = subs.firstOrNull { it.second == trackId && (it.first.lastOrNull()?.let { last -> last.startUs + last.durationUs <= clip.startUs } ?: true) }
+                ?: mutableListOf<ClipView>().also { subs.add(it to trackId) }
             // zero-length markers ride the lane they sit on without blocking it
             if (end > clip.startUs) sub.first.add(clip) else (subs.firstOrNull() ?: sub).first.add(clip)
         }

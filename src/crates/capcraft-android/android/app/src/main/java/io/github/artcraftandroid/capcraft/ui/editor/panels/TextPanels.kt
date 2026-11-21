@@ -259,7 +259,7 @@ fun TextPanel(vm: EditorViewModel, clipId: String?, startTab: Int = 3) {
     // the words open in a full-screen editor from the field's expand button
     var expanded by remember { mutableStateOf(false) }
     if (expanded) {
-        FullTextEditor(text, onBack = { expanded = false }) { words ->
+        FullTextEditor(text, onBack = { expanded = false }, onTyping = { typing -> vm.textEditing = typing }) { words ->
             expanded = false
             text = words
             change(null) { put("content", words) }
@@ -480,7 +480,7 @@ fun TextPanel(vm: EditorViewModel, clipId: String?, startTab: Int = 3) {
  * step back and forth through what was typed here.
  */
 @Composable
-internal fun FullTextEditor(start: String, onBack: () -> Unit, onDone: (String) -> Unit) {
+internal fun FullTextEditor(start: String, onBack: () -> Unit, onDone: (String) -> Unit, onTyping: ((Boolean) -> Unit)? = null) {
     var words by remember { mutableStateOf(start) }
     val back = remember { mutableStateListOf<String>() }
     val ahead = remember { mutableStateListOf<String>() }
@@ -527,7 +527,7 @@ internal fun FullTextEditor(start: String, onBack: () -> Unit, onDone: (String) 
                 },
                 textStyle = Type.Body.copy(fontSize = 17.sp, color = Palette.Text),
                 cursorBrush = SolidColor(Palette.Accent),
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 12.dp).focusRequester(focus).onFocusChanged { vm.textEditing = it.isFocused },
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 12.dp).focusRequester(focus).onFocusChanged { onTyping?.invoke(it.isFocused) },
             )
         }
     }
