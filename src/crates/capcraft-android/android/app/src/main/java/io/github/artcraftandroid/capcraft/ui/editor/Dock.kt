@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -210,7 +211,30 @@ fun Dock(vm: EditorViewModel) {
                 } else {
                     // a tool put before the first (a collage's Layout) shows from the start, not scrolled past
                     val row = remember(key, tools.firstOrNull()?.id) { androidx.compose.foundation.lazy.LazyListState() }
-                    LazyRow(Modifier.fillMaxHeight(), state = row, verticalAlignment = Alignment.CenterVertically) {
+                    val wheelScope = rememberCoroutineScope()
+                    LazyRow(
+                        Modifier.fillMaxHeight()
+                            .pointerInput(row) {
+                                // DeX/desktop mouse: vertical wheel (bare or with Shift) scrolls the bar
+                                // horizontally, so tools past the edge are reachable without touch-drag
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val e = awaitPointerEvent()
+                                        if (e.type != androidx.compose.ui.input.pointer.PointerEventType.Scroll) continue
+                                        val d = e.scrollDelta
+                                        val dx = (if (d.y != 0f) d.y else d.x)
+                                        if (dx != 0f) {
+                                            wheelScope.launch {
+                                                row.scrollBy(dx * 1.5f)
+                                            }
+                                            e.changes.forEach { it.consume() }
+                                        }
+                                    }
+                                }
+                            },
+                        state = row,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         items(tools, key = { it.id }) { tool -> ToolItem(tool) }
                     }
                 }
