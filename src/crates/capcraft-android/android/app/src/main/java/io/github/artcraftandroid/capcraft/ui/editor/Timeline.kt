@@ -819,6 +819,12 @@ private fun targetRow(layout: Layout, rows: List<DisplayRow>, from: Int, dy: Flo
     return best
 }
 
+/** The drawn band of display row [index]: its clips' band. */
+private fun layoutRowBand(layout: Layout, index: Int): Rect {
+    val top = layout.rowTop(index)
+    return Rect(0f, top, layout.width, top + layout.rowHeight(index))
+}
+
 private fun onTap(vm: EditorViewModel, layout: Layout, at: Offset, playhead: Long, pickMain: (PickVisualMediaRequest) -> Unit) {
     // choosing several: a tap on a clip adds it or takes it away, and nothing else happens
     vm.chosen?.let { set ->
