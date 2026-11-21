@@ -389,7 +389,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                 // but the framework delivers ACTION_SCROLL to views. Vertical wheel
                 // scrubs the timeline (Shift forces it too); Ctrl+wheel zooms.
                 // Return false so the event keeps flowing to the gesture input below.
-                .pointerInteropFilter { event ->
+                .pointerInteropFilter(onTouchEvent = { event ->
                     if (event.action == android.view.MotionEvent.ACTION_SCROLL) {
                         val vScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
                         val hScrollAxis = event.getAxisValue(android.view.MotionEvent.AXIS_HSCROLL)
@@ -408,7 +408,7 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                     } else {
                         false
                     }
-                }
+                })
                 .pointerInput(vm) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
