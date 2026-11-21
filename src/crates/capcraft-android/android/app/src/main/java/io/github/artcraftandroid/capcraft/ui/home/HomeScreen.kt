@@ -1197,8 +1197,6 @@ private fun AutomationField(
     )
 }
 
-/** What CapCraft is, who made the engine under it, and that it is nobody else's app. */
-@Composable
 /**
  * Settings → Check for updates: asks `version.json` what is published, shows what changed, and
  * downloads the APK with a progress bar, the bytes done against the bytes promised, and a Cancel
@@ -1370,6 +1368,8 @@ private fun UpdateButton(label: String, secondary: Boolean = false, onClick: () 
     }
 }
 
+/** What CapCraft is, who made the engine under it, and that it is nobody else's app. */
+@Composable
 private fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val version = remember { appVersion(context) }
