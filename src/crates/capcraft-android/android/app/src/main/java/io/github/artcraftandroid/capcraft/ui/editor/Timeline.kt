@@ -373,8 +373,8 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
     androidx.compose.runtime.LaunchedEffect(timeline) {
         val t = timeline
         if (t != null) {
-            val tileH = (Track.ROW * density).roundToInt().coerceAtLeast(16)
-            val pxPerUs = Track.DP_PER_SECOND * density * zoom / 1_000_000f
+            val tileH = (Track.ROW * dp).roundToInt().coerceAtLeast(16)
+            val pxPerUs = Track.DP_PER_SECOND * dp * zoom / 1_000_000f
             Thumbs.preload(t.rows, tileH, pxPerUs)
         }
     }
