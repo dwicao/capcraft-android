@@ -156,9 +156,10 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             TopBar(vm = vm, onClose = ::leave, onExport = ::export)
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                // the preview and the timeline share what the bars leave, about 60:40
+                // the preview and the timeline share what the bars leave; the divider between them resizes
                 val free = maxHeight - EditorMetrics.PlayBarHeight
-                val timelineHeight = maxOf(EditorMetrics.TimelineHeight, free * 0.4f)
+                val fraction = vm.timelineFraction.coerceIn(0.2f, 0.8f)
+                val timelineHeight = maxOf(EditorMetrics.TimelineHeight, free * fraction)
                 vm.timelineHeight = timelineHeight
                 vm.areaHeight = maxHeight
                 Column(Modifier.fillMaxSize()) {
@@ -172,6 +173,7 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
                         if (!vm.fullscreen) Preview(vm, Modifier.fillMaxSize())
                     }
                     PlayBar(vm)
+                    TimelineDivider(vm)
                     Box(Modifier.fillMaxWidth().height(timelineHeight)) {
                         Timeline(vm, Modifier.fillMaxSize())
                     }
@@ -192,6 +194,33 @@ fun EditorScreen(path: String, incoming: List<Uri>, then: String? = null, close:
             ExportScreen(vm, onClose = { exporting = false }, onHome = { exporting = false; leave() })
         }
         Toast(vm.message, bottom = with(density) { belowPreview.toDp() } + 28.dp) { vm.message = null }
+    }
+}
+
+/** The grab handle between preview and timeline: drag up/down to resize the timeline. */
+@Composable
+private fun TimelineDivider(vm: EditorViewModel) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(
+        Modifier.fillMaxWidth().height(18.dp)
+            .pointerInput(vm) {
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) break
+                        val areaPx = with(density) { vm.areaHeight.toPx() }.coerceAtLeast(1f)
+                        vm.timelineFraction = (vm.timelineFraction + c.positionChange().y / areaPx).coerceIn(0.2f, 0.8f)
+                        c.consume()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.width(64.dp).height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.DockBack),
+        )
     }
 }
 

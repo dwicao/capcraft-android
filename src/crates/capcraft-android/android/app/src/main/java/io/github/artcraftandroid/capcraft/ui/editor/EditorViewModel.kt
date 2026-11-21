@@ -161,10 +161,16 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
     )
     /** How tall the timeline is drawn: panels cover it and the bottom bar. */
     var timelineHeight by mutableStateOf(EditorMetrics.TimelineHeight)
+    /** The timeline's share of the preview+timeline area, 0.2 (mostly preview)
+     *  to 0.8 (mostly timeline). Drag the divider between them to resize. */
+    var timelineFraction by mutableStateOf(0.4f)
     /** The height the preview, the play bar and the timeline share, under the top bar. */
     var areaHeight by mutableStateOf(androidx.compose.ui.unit.Dp(0f))
     /** While set, a tap on the preview picks a colour (RGB) for it instead of selecting. */
     var pickColor: ((Int) -> Unit)? by mutableStateOf(null)
+    /** True while a text field holds focus (typing, search): DeX shortcuts that
+     *  clash with typing (Ctrl+C/V/X/Z/Y, arrows, Space, Delete) go to the field. */
+    var textEditing by mutableStateOf(false)
     /** The last frame the preview showed, for picking colours from. */
     @Volatile var lastFrame: android.graphics.Bitmap? = null
 
@@ -743,7 +749,10 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
             message = "Nothing to paste"
             return
         }
-        val s = session ?: return
+        val s = session ?: run {
+            message = "Open a project first"
+            return
+        }
         val at = playhead
         viewModelScope.launch {
             val result = withContext(Threads.commands) {
@@ -752,36 +761,35 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
                         // text/shapes carry everything they need: make them fresh
                         "text", "shape" -> s.addText(at, pasted.durationUs, pasted.styleJson)
                         else -> {
-                            // stickers re-place their picture; other media duplicates by id
-                            var v: TimelineView
+                            // stickers re-place their picture; other media duplicates by id,
+                            // then the copy is moved to the playhead — one UI action, one message
                             if (pasted.kind == "image" && pasted.wasTextRow) {
                                 val mediaId = pasted.mediaId.ifEmpty {
                                     throw IllegalStateException("That sticker's picture is gone")
                                 }
-                                v = s.addSticker(mediaId, at, pasted.durationUs)
+                                s.addSticker(mediaId, at, pasted.durationUs)
                             } else {
                                 val sourceId = findMediaSourceId(pasted)
                                     ?: throw IllegalStateException("That clip is gone")
-                                v = s.duplicate(sourceId)
-                            }
-                            val id = v.createdId
-                            if (id.isNotEmpty()) {
-                                val now = v.rows.flatMap { it.clips }.firstOrNull { it.id == id }
-                                if (now != null) {
-                                    val mainId = v.rows.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.trackId
-                                    v = if (now.trackId == mainId) {
-                                        // the main track stays in order: the copy goes where the playhead is
-                                        val ordered = v.rows.first { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }.clips.sortedBy { it.startUs }
-                                        val from = ordered.indexOfFirst { it.id == id }
-                                        var target = ordered.count { it.startUs + it.durationUs / 2 < at }
-                                        if (from >= 0 && target > from) target -= 1
-                                        if (from >= 0 && target != from) s.reorderMain(id, target.toUInt()) else v
-                                    } else {
-                                        s.moveClip(id, "", at)
-                                    }
+                                val duped = s.duplicate(sourceId)
+                                val id = duped.createdId.ifEmpty {
+                                    throw IllegalStateException("The copy failed")
+                                }
+                                // place at the playhead: main track reorders, lanes move freely
+                                val now = duped.rows.flatMap { it.clips }.firstOrNull { it.id == id }
+                                    ?: throw IllegalStateException("The copy vanished")
+                                val mainId = duped.rows.firstOrNull { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }?.trackId
+                                if (now.trackId == mainId) {
+                                    val ordered = duped.rows.first { it.kind == io.github.artcraftandroid.capcraft.core.RowKind.MAIN }.clips.sortedBy { it.startUs }
+                                    val from = ordered.indexOfFirst { it.id == id }
+                                    if (from < 0) throw IllegalStateException("The copy vanished")
+                                    var target = ordered.count { it.startUs + it.durationUs / 2 < at }
+                                    if (target > from) target -= 1
+                                    if (target != from) s.reorderMain(id, target.toUInt()) else duped
+                                } else {
+                                    s.moveClip(id, "", at)
                                 }
                             }
-                            v
                         }
                     }
                 }

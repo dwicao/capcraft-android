@@ -21,6 +21,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -280,7 +281,7 @@ fun SoundsPage(vm: EditorViewModel) {
                     singleLine = true,
                     textStyle = Type.Body.copy(color = Color.White, fontSize = 15.sp),
                     cursorBrush = SolidColor(Palette.Accent),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { vm.textEditing = it.isFocused },
                 )
             }
         }

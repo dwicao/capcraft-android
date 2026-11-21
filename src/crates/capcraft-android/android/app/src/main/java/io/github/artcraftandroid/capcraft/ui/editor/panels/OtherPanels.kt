@@ -16,6 +16,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -783,7 +784,7 @@ fun VoiceoverPanel(vm: EditorViewModel) {
                             inner()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp)).background(Palette.Card).padding(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(8.dp)).background(Palette.Card).padding(12.dp).onFocusChanged { vm.textEditing = it.isFocused },
                 )
             },
         ) {

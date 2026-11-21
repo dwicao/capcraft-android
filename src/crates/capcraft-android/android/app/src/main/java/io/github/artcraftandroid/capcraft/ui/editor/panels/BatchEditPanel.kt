@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -172,7 +173,7 @@ private fun CaptionLine(vm: EditorViewModel, id: String, start: Long, current: B
             enabled = tick == null,
             textStyle = Type.Body.copy(color = if (current) Palette.Text else Palette.TextSecondary, fontSize = 15.sp),
             cursorBrush = SolidColor(Palette.Accent),
-            modifier = Modifier.weight(1f).padding(vertical = 10.dp),
+            modifier = Modifier.weight(1f).padding(vertical = 10.dp).onFocusChanged { vm.textEditing = it.isFocused },
         )
     }
 }

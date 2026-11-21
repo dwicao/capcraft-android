@@ -33,6 +33,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +52,36 @@ import io.github.artcraftandroid.capcraft.ui.Type
  *   [TimelineClipMenu] over the timeline or [PreviewClipMenu] over the preview.
  * - [ShortcutsSheet] lists every shortcut; the top bar's keyboard button opens it, as does Ctrl+/.
  */
+
+/** Keys a focused text field owns: plain typing, arrows, Space, Delete… */
+private val TYPING_KEYS = setOf(
+    AndroidKey.KEYCODE_SPACE,
+    AndroidKey.KEYCODE_DPAD_LEFT, AndroidKey.KEYCODE_DPAD_RIGHT,
+    AndroidKey.KEYCODE_DPAD_UP, AndroidKey.KEYCODE_DPAD_DOWN,
+    AndroidKey.KEYCODE_J, AndroidKey.KEYCODE_L, AndroidKey.KEYCODE_K,
+    AndroidKey.KEYCODE_MOVE_HOME, AndroidKey.KEYCODE_MOVE_END,
+    AndroidKey.KEYCODE_DEL, AndroidKey.KEYCODE_FORWARD_DEL,
+    // A-Z, 0-9 and common punctuation type into the field
+    AndroidKey.KEYCODE_A, AndroidKey.KEYCODE_B, AndroidKey.KEYCODE_C,
+    AndroidKey.KEYCODE_D, AndroidKey.KEYCODE_E, AndroidKey.KEYCODE_F,
+    AndroidKey.KEYCODE_G, AndroidKey.KEYCODE_H, AndroidKey.KEYCODE_I,
+    AndroidKey.KEYCODE_M, AndroidKey.KEYCODE_N, AndroidKey.KEYCODE_O,
+    AndroidKey.KEYCODE_P, AndroidKey.KEYCODE_Q, AndroidKey.KEYCODE_R,
+    AndroidKey.KEYCODE_S, AndroidKey.KEYCODE_T, AndroidKey.KEYCODE_U,
+    AndroidKey.KEYCODE_V, AndroidKey.KEYCODE_W, AndroidKey.KEYCODE_X,
+    AndroidKey.KEYCODE_Z, AndroidKey.KEYCODE_0, AndroidKey.KEYCODE_1,
+    AndroidKey.KEYCODE_2, AndroidKey.KEYCODE_3, AndroidKey.KEYCODE_4,
+    AndroidKey.KEYCODE_5, AndroidKey.KEYCODE_6, AndroidKey.KEYCODE_7,
+    AndroidKey.KEYCODE_8, AndroidKey.KEYCODE_9, AndroidKey.KEYCODE_COMMA,
+    AndroidKey.KEYCODE_PERIOD, AndroidKey.KEYCODE_MINUS, AndroidKey.KEYCODE_SLASH,
+    AndroidKey.KEYCODE_AT, AndroidKey.KEYCODE_APOSTROPHE,
+)
+
+/** Ctrl+letters a focused text field owns (copy/cut/paste/select-all). */
+private val CLIPBOARD_KEYS = setOf(
+    AndroidKey.KEYCODE_C, AndroidKey.KEYCODE_V, AndroidKey.KEYCODE_X,
+    AndroidKey.KEYCODE_A, AndroidKey.KEYCODE_Z, AndroidKey.KEYCODE_Y,
+)
 
 /** A right-click menu request: the clip, and where it opened (dp, in the surface that opened it). */
 data class ClipMenu(val clipId: String, val xDp: Float, val yDp: Float, val fromPreview: Boolean)
@@ -84,6 +115,12 @@ private val DEX_SHORTCUTS = listOf(
 /**
  * DeX hardware-keyboard shortcuts for the editor. Must be applied from a @Composable (it focuses
  * the root so keys reach the handler): `Box(Modifier.dexShortcuts(vm))`.
+ *
+ * Two phases: undo/redo run on the *preview* (capture) phase so they work even when a button or
+ * the timeline holds focus — a focused text field keeps its own Ctrl+Z/Y. Everything else runs on
+ * the bubble phase ([onKeyEvent]), so a focused text field keeps what it handles (typing, arrows,
+ * Ctrl+C inside it) and only the rest reaches the editor. While [EditorViewModel.textEditing] is
+ * set, editing keys (Space, arrows, Delete, Ctrl+C/V/X) are left to the field.
  */
 @Composable
 fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
@@ -95,11 +132,34 @@ fun Modifier.dexShortcuts(vm: EditorViewModel): Modifier {
     // hardware keys keep working without tapping the timeline first. Guarded
     // on panel null so typing inside an open panel never loses focus mid-key.
     androidx.compose.runtime.LaunchedEffect(vm.panel) {
-        if (vm.panel == null) {
+        if (vm.panel == null && !vm.textEditing) {
             try { focus.requestFocus() } catch (_: Exception) { }
         }
     }
-    return this.focusRequester(focus).focusable().onKeyEvent { handleDexKey(vm, it) }
+    return this.focusRequester(focus).focusable()
+        .onPreviewKeyEvent { handleUndoRedo(vm, it) }
+        .onKeyEvent { handleDexKey(vm, it) }
+}
+
+/** Capture-phase undo/redo: global even when buttons hold focus, but never stolen from typing. */
+private fun handleUndoRedo(vm: EditorViewModel, e: KeyEvent): Boolean {
+    val kev = e.nativeKeyEvent
+    if (kev.action != android.view.KeyEvent.ACTION_DOWN || kev.repeatCount != 0) return false
+    if (vm.textEditing) return false
+    val ctrl = kev.isCtrlPressed
+    if (!ctrl || kev.isAltPressed) return false
+    return when (kev.keyCode) {
+        AndroidKey.KEYCODE_Z -> {
+            // Ctrl+Shift+Z redoes (Ctrl+Z undoes); Ctrl+Y redoes too
+            vm.step(back = !kev.isShiftPressed)
+            true
+        }
+        AndroidKey.KEYCODE_Y -> {
+            vm.step(back = false)
+            true
+        }
+        else -> false
+    }
 }
 
 private fun handleDexKey(vm: EditorViewModel, e: KeyEvent): Boolean {
@@ -113,6 +173,8 @@ private fun handleDexKey(vm: EditorViewModel, e: KeyEvent): Boolean {
     val arrowsOk = kev.keyCode in
         setOf(AndroidKey.KEYCODE_DPAD_LEFT, AndroidKey.KEYCODE_DPAD_RIGHT, AndroidKey.KEYCODE_J, AndroidKey.KEYCODE_L)
     if (!once && !arrowsOk) return false
+    // typing wins for its own keys: letters, arrows, Space, Delete and clipboard go to the field
+    if (vm.textEditing && (kev.keyCode in TYPING_KEYS || (ctrl && kev.keyCode in CLIPBOARD_KEYS))) return false
     when (kev.keyCode) {
         AndroidKey.KEYCODE_SPACE -> {
             if (ctrl || alt) return false
@@ -177,13 +239,13 @@ private fun handleDexKey(vm: EditorViewModel, e: KeyEvent): Boolean {
             return true
         }
         AndroidKey.KEYCODE_Z -> {
-            if (!ctrl || alt || !once) return false
-            // Ctrl+Shift+Z redoes (Ctrl+Z undoes); Ctrl+Y redoes too
+            // handled on the preview phase (see handleUndoRedo); bubble is the fallback
+            if (!ctrl || alt || !once || vm.textEditing) return false
             vm.step(back = !shift)
             return true
         }
         AndroidKey.KEYCODE_Y -> {
-            if (!ctrl || alt || !once) return false
+            if (!ctrl || alt || !once || vm.textEditing) return false
             vm.step(back = false)
             return true
         }

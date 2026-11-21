@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -157,7 +158,7 @@ fun SpeechPanel(vm: EditorViewModel, captions: Boolean, clipId: String?) {
                             inner()
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF3A3A3A)).padding(12.dp),
+                    modifier = Modifier.fillMaxWidth().height(96.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF3A3A3A)).padding(12.dp).onFocusChanged { vm.textEditing = it.isFocused },
                 )
                 Spacer(Modifier.height(12.dp))
             }

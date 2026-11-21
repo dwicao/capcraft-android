@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.horizontalScroll
@@ -1133,7 +1134,7 @@ private fun TransitionPanel(vm: EditorViewModel, clipId: String) {
 
 /** A search field for a panel's bar: a rounded box with a magnifier, and a cross to clear it. */
 @Composable
-internal fun SearchField(value: String, onChange: (String) -> Unit, hint: String, autoFocus: Boolean = false) {
+internal fun SearchField(value: String, onChange: (String) -> Unit, hint: String, autoFocus: Boolean = false, onTyping: ((Boolean) -> Unit)? = null) {
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     // a box opened from a magnifier takes the keyboard at once
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
@@ -1155,7 +1156,9 @@ internal fun SearchField(value: String, onChange: (String) -> Unit, hint: String
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.Accent),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide() }),
-                modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(focus)),
+                modifier = Modifier.fillMaxWidth().then(Modifier.focusRequester(focus)).then(
+                    if (onTyping != null) Modifier.onFocusChanged { onTyping(it.isFocused) } else Modifier
+                ),
             )
         }
         if (value.isNotEmpty()) {

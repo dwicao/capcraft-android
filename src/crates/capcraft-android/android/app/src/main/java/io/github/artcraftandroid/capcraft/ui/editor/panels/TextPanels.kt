@@ -295,7 +295,7 @@ fun TextPanel(vm: EditorViewModel, clipId: String?, startTab: Int = 3) {
                     .background(Color(0xFF3A3A3A))
                     .padding(horizontal = 12.dp, vertical = 11.dp)
                     .focusRequester(focus)
-                    .onFocusChanged { if (it.isFocused) tab = 0 },
+                    .onFocusChanged { if (it.isFocused) { tab = 0; vm.textEditing = true } else vm.textEditing = false },
                 decorationBox = { inner ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.weight(1f)) {
@@ -527,7 +527,7 @@ internal fun FullTextEditor(start: String, onBack: () -> Unit, onDone: (String) 
                 },
                 textStyle = Type.Body.copy(fontSize = 17.sp, color = Palette.Text),
                 cursorBrush = SolidColor(Palette.Accent),
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 12.dp).focusRequester(focus),
+                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 20.dp, vertical = 12.dp).focusRequester(focus).onFocusChanged { vm.textEditing = it.isFocused },
             )
         }
     }
