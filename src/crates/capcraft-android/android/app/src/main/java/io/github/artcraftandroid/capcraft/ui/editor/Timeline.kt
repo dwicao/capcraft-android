@@ -10,6 +10,7 @@ import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitPointerEventScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -110,8 +111,13 @@ private fun mergedRows(rows: List<RowView>): List<RowView> =
         val subs = mutableListOf<Pair<MutableList<ClipView>, String>>()
         for ((clip, trackId) in clips) {
             val end = clip.startUs + clip.durationUs
-            val sub = subs.firstOrNull { it.second == trackId && (it.first.lastOrNull()?.let { last -> last.startUs + last.durationUs <= clip.startUs } ?: true) }
-                ?: mutableListOf<ClipView>().also { subs.add(it to trackId) }
+            val existing: Pair<MutableList<ClipView>, String>? = subs.firstOrNull { entry ->
+                entry.second == trackId && (entry.first.lastOrNull()?.let { last ->
+                    last.startUs + last.durationUs <= clip.startUs
+                } ?: true)
+            }
+            val sub: Pair<MutableList<ClipView>, String> = existing
+                ?: (mutableListOf<ClipView>() to trackId).also { subs.add(it) }
             // zero-length markers ride the lane they sit on without blocking it
             if (end > clip.startUs) sub.first.add(clip) else (subs.firstOrNull() ?: sub).first.add(clip)
         }
