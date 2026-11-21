@@ -1,13 +1,13 @@
 {
-  "version": "0.0.9-beta",
-  "versionCode": 901,
-  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.9-beta-updates/capcraft-android-0.0.9-beta-aosp.apk",
+  "version": "0.0.10-beta",
+  "versionCode": 1001,
+  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.10-beta-thumbs2/capcraft-android-0.0.10-beta-aosp.apk",
   "sizeBytes": 114761415,
-  "sha256": "f446bf603a89cce215d6442338059f0c5f6287ff969939137ed5fa2349ee6824",
+  "sha256": "11d8c439be1d152b4f0a1e2f6e80f43f38b7dc0a01cc66d1f0e66825c20b792c",
   "releasedAt": "2026-11-22",
   "notes": [
-    "Thumbnail timeline langsung muncul saat project dibuka (preload strip penuh + cache disk).",
-    "Settings → Check for updates: cek versi, changelog, progress bar unduhan, tombol Cancel, lalu Install.",
-    "Timeline lebih rapat: row berdempetan tanpa gap."
+    "Thumbnail tidak blur/melar lagi: satu frame utuh per tile.",
+    "Strip tajam per klip diantre dari posisi playhead; placeholder filmstrip tampil seketika.",
+    "Update lewat Settings → Check for updates (versi ini sudah membawa updater)."
   ]
 }
