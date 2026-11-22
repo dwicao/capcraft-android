@@ -1,13 +1,14 @@
 {
-  "version": "0.0.10-beta",
-  "versionCode": 1001,
-  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.10-beta-thumbs2/capcraft-android-0.0.10-beta-aosp.apk",
+  "version": "0.0.11-beta",
+  "versionCode": 1101,
+  "apkUrl": "https://github.com/dwicao/capcraft-android/releases/download/v0.0.11-beta-perf/capcraft-android-0.0.11-beta-aosp.apk",
   "sizeBytes": 114761415,
-  "sha256": "11d8c439be1d152b4f0a1e2f6e80f43f38b7dc0a01cc66d1f0e66825c20b792c",
+  "sha256": "eed8c86af3d4855cfe352cae49dcd66c9b0fc83cd0e5b4951cc693ef9eca4bf1",
   "releasedAt": "2026-11-22",
   "notes": [
-    "Thumbnail tidak blur/melar lagi: satu frame utuh per tile.",
-    "Strip tajam per klip diantre dari posisi playhead; placeholder filmstrip tampil seketika.",
-    "Update lewat Settings → Check for updates (versi ini sudah membawa updater)."
+    "Performa: thread pool mengikuti core, thumbnail 3..6 thread.",
+    "Import file tidak lagi menahan antrean edit.",
+    "Redraw timeline dikumpulkan, baris di luar layar tidak digambar.",
+    "Decoder hardware 4 sesi; export tetap MediaCodec + wgpu."
   ]
 }
