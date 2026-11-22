@@ -9,14 +9,26 @@ import kotlinx.coroutines.Dispatchers
 
 /** The threads engine calls run on. Never call the engine from the main thread. */
 object Threads {
+    /** The phone's cores: what the pools below scale to. */
+    val cores: Int = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
+
     /** Edits run one at a time, in the order the UI issued them. */
     val commands: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     /** The preview: one picture at a time, the newest wins. */
     val preview: CoroutineDispatcher = Dispatchers.Default.limitedParallelism(1)
 
-    /** Timeline filmstrips, waveforms and covers: a few at once, so a big project warms fast. */
-    val thumbnails: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(3)
+    /**
+     * Timeline filmstrips, waveforms and covers. These decode in software at thumbnail size (see
+     * concat-media's MEDIACODEC_SMALLEST), so they are pure CPU work and scale with the cores —
+     * a cooled phone can keep most of them busy while the preview plays. Capped so the decoder
+     * queue cannot crowd out the preview or the export.
+     */
+    val thumbnails: CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(cores.coerceIn(3, 6))
+
+    /** Copying picked files into a project: disk work, never behind an edit. */
+    val files: CoroutineDispatcher = Dispatchers.IO
 }
 
 /** A message for the user from anything the engine (or the system) threw. */

@@ -500,7 +500,9 @@ fn read_through(
     height: u32,
     tiles: &mut [Option<Frame>],
 ) -> Result<(), String> {
-    let mut options = DecodeOptions::default().scaled_to(width, height);
+    let mut options = DecodeOptions::default()
+        .scaled_to(width, height)
+        .threaded(thumbnail_threads());
     if from > 0.0 {
         options = options.starting_at(Rational::approximate(from).unwrap_or(Rational::ZERO));
     }
@@ -563,6 +565,7 @@ fn keyframe_tiles(
         path,
         &DecodeOptions::default()
             .scaled_to(width, height)
+            .threaded(thumbnail_threads())
             .nearest_keyframes(),
     )
     .map_err(describe)?;
@@ -592,6 +595,16 @@ fn in_slice(at: f64, from: f64, slice: f64, index: usize) -> bool {
 
 /// One seek per tile, to the keyframe at or before its instant. Near
 /// enough for a thumbnail, and one decode each however long the file.
+/// The threads a filmstrip's decoder asks for: these are small frames, decoded in software while
+/// the preview keeps the phone's hardware decoders, so the work scales with the cores. A strip
+/// reads its tiles back to back, which frame threads overlap.
+fn thumbnail_threads() -> u16 {
+    let cores = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(2);
+    (cores / 2).clamp(2, 6) as u16
+}
+
 fn seek_each(
     path: &str,
     instant: &dyn Fn(usize) -> f64,
@@ -603,6 +616,7 @@ fn seek_each(
         path,
         &DecodeOptions::default()
             .scaled_to(width, height)
+            .threaded(thumbnail_threads())
             .nearest_keyframes(),
     )
     .map_err(describe)?;

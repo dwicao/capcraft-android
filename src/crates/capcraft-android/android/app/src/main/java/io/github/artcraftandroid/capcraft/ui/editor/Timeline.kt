@@ -606,6 +606,10 @@ fun Timeline(vm: EditorViewModel, modifier: Modifier) {
                 }
                 rows.forEachIndexed { index, row ->
                     val lane = row.lane ?: return@forEachIndexed
+                    // a row scrolled out of sight draws nothing: with many layers the canvas
+                    // used to walk every clip of every row on every frame
+                    val bandTop = layout.rowTop(index)
+                    if (bandTop > size.height || bandTop + layout.rowHeight(index) < layout.rulerH) return@forEachIndexed
                     // the selected clip last, so its handles lie over its neighbours
                     lane.clips.sortedBy { it.id == vm.selected }.forEach { clip ->
                         var r = layout.clipRect(index, clip)

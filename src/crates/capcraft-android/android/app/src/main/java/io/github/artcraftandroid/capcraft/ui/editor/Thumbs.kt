@@ -30,6 +30,30 @@ import kotlinx.coroutines.launch
 object Thumbs {
     val version = mutableIntStateOf(0)
     private val scope = CoroutineScope(SupervisorJob() + Threads.thumbnails)
+
+    /**
+     * Wakes the timeline, at most a few times a second: a project's strips land in bursts, and one
+     * repaint per arrival made the canvas redraw a hundred times while a big project warmed.
+     */
+    private val bumpAt = java.util.concurrent.atomic.AtomicLong(0L)
+    private fun bump() {
+        val now = System.currentTimeMillis()
+        val last = bumpAt.get()
+        if (now - last < 80L) {
+            // a burst: one trailing bump, so the last arrivals still show
+            if (bumpLater.compareAndSet(false, true)) {
+                scope.launch {
+                    kotlinx.coroutines.delay(90L)
+                    bumpLater.set(false)
+                    bumpAt.set(System.currentTimeMillis())
+                    version.intValue++
+                }
+            }
+            return
+        }
+        if (bumpAt.compareAndSet(last, now)) version.intValue++
+    }
+    private val bumpLater = java.util.concurrent.atomic.AtomicBoolean(false)
     // android.util.LruCache is NOT thread-safe, and strips/waves are filled
     // from the thumbnail threads while the draw thread reads: every access
     // goes under this lock.
@@ -202,7 +226,7 @@ object Thumbs {
                     }.getOrNull()
                     if (put != null) stripPut(key, put)
                     pending.remove(key)
-                    version.intValue++
+                    bump()
                 }
             }
         }
@@ -234,7 +258,7 @@ object Thumbs {
                 runCatching { filmstrip(path, fromUs, toUs, count.toUInt(), height.toUInt()).toBitmap() }
                     .getOrNull()?.let { stripPut(key, it) }
                 pending.remove(key)
-                version.intValue++
+                bump()
             }
         }
         return null
@@ -248,7 +272,7 @@ object Thumbs {
             scope.launch {
                 runCatching { still(path, atUs, width.toUInt()).toBitmap() }.getOrNull()?.let { stripPut(key, it) }
                 pending.remove(key)
-                version.intValue++
+                bump()
             }
         }
         return null
@@ -263,7 +287,7 @@ object Thumbs {
                 runCatching { waveform(path, project, fromUs, toUs, buckets.toUInt()).toFloatArray() }
                     .getOrNull()?.let { wavePut(key, it) }
                 pending.remove(key)
-                version.intValue++
+                bump()
             }
         }
         return null

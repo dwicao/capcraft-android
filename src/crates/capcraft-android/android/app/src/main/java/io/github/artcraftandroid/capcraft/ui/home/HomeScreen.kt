@@ -1056,6 +1056,12 @@ private fun MeTab(onLicences: () -> Unit, onAbout: () -> Unit, onAutomation: () 
             SettingRow("Clear cache", cache?.let(::size) ?: "") { clearing = true }
             SettingRow("Automation (AI agents)", null, onAutomation)
             SettingRow("Check for updates", null, onUpdates)
+            // what the phone is doing with its cores, so a slow phone is easy to tell from a slow project
+            SettingRow(
+                "Performance",
+                "${Threads.cores} cores · ${Threads.cores.coerceIn(3, 6)} thumbnail threads",
+                null,
+            )
             SettingRow("Licences", null, onLicences)
             SettingRow("About CapCraft", null, onAbout)
             SettingRow("Version", version, { onUpdates() })

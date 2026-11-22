@@ -483,12 +483,13 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         val s = session ?: return
         viewModelScope.launch {
             busy = "Importing"
-            val result = withContext(Threads.commands) {
-                runCatching {
-                    val ids = uris.map { uri ->
-                        val file = Media.importUri(getApplication(), path, uri)
-                        s.import(file.absolutePath).id
-                    }
+            val result = runCatching {
+                // the copies are disk work: they must not hold the edit queue
+                val paths = withContext(Threads.files) {
+                    uris.map { uri -> Media.importUri(getApplication(), path, uri).absolutePath }
+                }
+                withContext(Threads.commands) {
+                    val ids = paths.map { s.import(it).id }
                     val at = if (atEnd) (timeline?.durationUs ?: 0L) else playhead
                     s.addToMain(ids, at)
                 }
@@ -537,11 +538,11 @@ class EditorViewModel(app: Application, val path: String) : AndroidViewModel(app
         val s = session ?: return
         viewModelScope.launch {
             busy = "Importing"
-            val result = withContext(Threads.commands) {
-                runCatching {
-                    val file = Media.importUri(getApplication(), path, uri)
-                    if (asAudio) s.addAudio(s.importSound(file.absolutePath).id, playhead)
-                    else s.addOverlay(s.import(file.absolutePath).id, playhead)
+            val result = runCatching {
+                val copied = withContext(Threads.files) { Media.importUri(getApplication(), path, uri).absolutePath }
+                withContext(Threads.commands) {
+                    if (asAudio) s.addAudio(s.importSound(copied).id, playhead)
+                    else s.addOverlay(s.import(copied).id, playhead)
                 }
             }
             busy = null
