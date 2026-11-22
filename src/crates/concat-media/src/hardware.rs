@@ -262,10 +262,13 @@ pub fn mediacodec_decoder(codec: ffmpeg::codec::Id, format: Pixel) -> Option<&'s
 /// keeps up to eight warm readers plus the filmstrip's and the export's,
 /// while what a person watches needs few at once: the clip under the
 /// playhead, the next one ready at a cut, and one more for a layer over
-/// them or a scrub elsewhere. So three; the fourth reader on decodes on
-/// the CPU as before, and a seat comes free when its reader closes or
-/// falls back.
-pub const MEDIACODEC_READERS: usize = 3;
+/// them or a scrub elsewhere. Four seats, so a layered edit (the main clip
+/// plus two overlays) still decodes every picture on the device while the
+/// export reads its own; the fifth reader on decodes on the CPU as before,
+/// and a seat comes free when its reader closes or falls back. A phone
+/// that will not spare the session fails `configure` and falls back the
+/// same way, which is what the seat budget is for.
+pub const MEDIACODEC_READERS: usize = 4;
 
 /// Pictures smaller than this, in pixels, are decoded in software even on
 /// a phone: a thumbnail or a scrub copy being written wants its frames at
